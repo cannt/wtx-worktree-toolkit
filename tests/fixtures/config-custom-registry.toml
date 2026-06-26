@@ -1,0 +1,4 @@
+# Fixture: non-default registry_path to verify config-driven resolution in worktree-tui.sh.
+
+[worktree]
+registry_path = ".custom-reg/my-registry.md"

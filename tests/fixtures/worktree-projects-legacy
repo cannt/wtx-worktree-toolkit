@@ -1,0 +1,4 @@
+# Legacy .worktree-projects format
+web=PROJ
+mobile = APP
+backend = CORE

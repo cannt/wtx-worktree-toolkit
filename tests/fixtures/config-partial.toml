@@ -1,0 +1,4 @@
+# Partial fixture — only forge is set.
+
+[forge]
+org = "partialco"

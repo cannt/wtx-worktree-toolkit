@@ -1,0 +1,23 @@
+# Full fixture — exercises every documented section.
+
+[forge]
+type = "bitbucket"
+org = "acme"  # inline comment should be stripped
+
+[jira.projects]
+web = "PROJ"
+mobile = "APP"
+
+[projects]
+list = ["web", "mobile", "backend"]
+
+[detection]
+markers = ["settings.gradle", "settings.gradle.kts"]
+
+[worktree]
+registry_path = ".claude/worktree-registry.md"
+builtin_path = ".claude/worktrees"
+
+[defaults]
+base_branch = "develop"
+branch_prefix = feature

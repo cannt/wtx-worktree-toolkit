@@ -1,0 +1,15 @@
+.DS_Store
+*.swp
+*.swo
+*~
+docs/project-scan-report.json
+
+# Local Claude Code / BMAD tooling — vendored in the working dir, not part of
+# the wtx tool itself. Kept on disk but not tracked.
+.claude/skills/
+.agents/
+_bmad/
+
+# iCloud Drive conflict-copy duplicates ("name 2.ext", "dir 2/")
+* 2.*
+* 2

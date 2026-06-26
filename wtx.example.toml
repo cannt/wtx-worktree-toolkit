@@ -1,0 +1,66 @@
+# wtx configuration — copy to `wtx.toml` at your workspace root and edit.
+#
+# Resolution order (first match wins):
+#   1. $WTX_CONFIG                     (explicit path, for tests/CI)
+#   2. $WORKSPACE_ROOT/wtx.toml        (repo-local, normal case)
+#   3. $HOME/.config/wtx/config.toml   (user global)
+#
+# Schema is flat: only one level of `[section]` plus a single dotted subtable
+# (`[jira.projects]`). Arrays must fit on one line. No inline tables.
+
+[forge]
+# Forge type drives PR URL construction. One of: bitbucket | github | gitlab
+type = "bitbucket"
+
+# Org / owner slug used for API calls and PR URL building.
+org = "acme"
+
+# Optional override for self-hosted forges. Leave unset for SaaS defaults.
+# base_url = "https://bitbucket.mycompany.internal"
+
+
+# Jira project key mapping: per-repo JIRA project key used when creating
+# branches and searching tickets. Repo name on the left, project key on the
+# right. If a repo has no entry here, Jira integration is effectively disabled
+# for it.
+[jira.projects]
+# web = "PROJ"
+# mobile = "APP"
+
+
+[projects]
+# Known project directories (relative to workspace root). These power the TUI
+# project picker. Empty list = the picker asks the user to type a path.
+# list = ["web", "mobile", "backend"]
+list = []
+
+
+[detection]
+# Root markers used by detect_project(). If ANY of these files exists in a
+# directory, wtx treats it as a project root. Leave unset to fall back to
+# `.git` alone (works for any git repository).
+# markers = ["settings.gradle", "settings.gradle.kts"]
+# markers = ["Cargo.toml"]
+# markers = ["package.json"]
+
+
+[worktree]
+# Where the registry file lives, relative to workspace root. The Claude Code
+# default is fine for most users.
+registry_path = ".claude/worktree-registry.md"
+
+# Base directory for built-in worktrees (as opposed to custom sibling dirs).
+builtin_path = ".claude/worktrees"
+
+# Optional post-create hook: path (relative to wtx install dir) to a script
+# run after a worktree is created. Leave unset for no-op. See
+# `plugins/android-setup.sh` for an example Android setup hook.
+# setup_hook = "plugins/android-setup.sh"
+
+
+[defaults]
+# Default base branch when none is supplied on the command line.
+base_branch = "develop"
+
+# Default branch prefix used when generating branch names from tickets.
+branch_prefix = "feature"

@@ -1,0 +1,4 @@
+# Fixture for testing defaults.base_branch config key.
+
+[defaults]
+base_branch = "main"

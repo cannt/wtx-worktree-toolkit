@@ -1,0 +1,4 @@
+# Fixture: empty registry_path falls back to the default workspace-relative path.
+
+[worktree]
+registry_path = ""

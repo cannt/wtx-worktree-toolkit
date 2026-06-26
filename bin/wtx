@@ -1,0 +1,374 @@
+#!/usr/bin/env bash
+# wtx — git worktree management dispatcher
+#
+# Resolves the canonical install location ($WTX_ROOT) from its own script path
+# (symlink-safe, macOS-friendly — no dependence on `readlink -f`), computes the
+# target workspace ($WORKSPACE_ROOT) from the current git repo (preferring the
+# main repo even when invoked from inside a linked worktree), exports both,
+# and routes subcommands to the scripts in $WTX_ROOT/scripts/.
+#
+# Subcommands:
+#   start [args...]     Create a new worktree
+#   done [args...]      Finalise + clean up a worktree
+#   status [args...]    Worktree dashboard
+#   init                Interactive wtx.toml generator
+#   doctor              Dependency + install invariant check
+#   version             Print wtx version
+#   help                Print usage
+#
+# Note: `done` in the case below is a legal pattern (it is only a reserved
+# word in command position, not in case-pattern position). `bash -n` accepts
+# it; some linters may not. Don't "fix".
+#
+# ERROR HANDLING: graceful — `set -u` only, no `set -e` inside handlers that
+# deliberately tolerate missing optional tooling.
+
+set -u
+
+# --- WTX_ROOT resolution (symlink-safe, no readlink -f) -----------------------
+_wtx_self="${BASH_SOURCE[0]}"
+while [[ -L "$_wtx_self" ]]; do
+    _wtx_link="$(readlink "$_wtx_self")"
+    if [[ "$_wtx_link" = /* ]]; then
+        _wtx_self="$_wtx_link"
+    else
+        _wtx_self="$(cd "$(dirname "$_wtx_self")" && pwd)/$_wtx_link"
+    fi
+done
+WTX_ROOT="$(cd "$(dirname "$_wtx_self")/.." && pwd)"
+export WTX_ROOT
+unset _wtx_self _wtx_link
+
+# --- WORKSPACE_ROOT resolution ------------------------------------------------
+# Prefer the main repo's path even when invoked from inside a linked worktree:
+# `git rev-parse --show-toplevel` returns the linked worktree's own path,
+# which breaks registry lookups in scripts/worktree-done.sh and friends.
+# `--git-common-dir` points at the main repo's .git dir in both cases.
+_wtx_resolve_workspace_root() {
+    local common
+    if common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" \
+       && [[ -n "$common" && -d "$common" ]]; then
+        printf '%s\n' "$(dirname "$common")"
+        return 0
+    fi
+    git rev-parse --show-toplevel 2>/dev/null || pwd
+}
+WORKSPACE_ROOT="$(_wtx_resolve_workspace_root)"
+export WORKSPACE_ROOT
+
+# --- Small helpers ------------------------------------------------------------
+
+# Backslash-escape `\` then `"` so a string is safe to embed between "..." in
+# a TOML scalar. Order matters — escape backslashes first.
+_wtx_toml_escape() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    printf '%s' "$s"
+}
+
+# Convert a comma-separated input to a TOML array literal. Whitespace around
+# items is trimmed. Globs are preserved verbatim (pathname expansion disabled).
+# Each item is TOML-escaped.
+_wtx_csv_to_toml_array() {
+    local input="$1" item out="[" first=1
+    set -f  # disable pathname expansion for the unquoted expansion below
+    local OLDIFS="$IFS"
+    IFS=','
+    # shellcheck disable=SC2206
+    local items=( $input )
+    IFS="$OLDIFS"
+    set +f
+    for item in "${items[@]}"; do
+        item="${item#"${item%%[![:space:]]*}"}"
+        item="${item%"${item##*[![:space:]]}"}"
+        [[ -z "$item" ]] && continue
+        if [[ $first -eq 1 ]]; then first=0; else out+=", "; fi
+        out+="\"$(_wtx_toml_escape "$item")\""
+    done
+    out+="]"
+    printf '%s' "$out"
+}
+
+# Abort if no interactive terminal is available. Init-style commands call
+# this so non-tty environments get a clear error instead of silently
+# accepting every default.
+_wtx_require_tty() {
+    if [[ ! -r /dev/tty ]] || { [[ ! -t 0 ]] && [[ ! -t 1 ]]; }; then
+        echo "wtx: this command requires an interactive terminal" >&2
+        return 1
+    fi
+    return 0
+}
+
+# --- Version ------------------------------------------------------------------
+
+_wtx_version() {
+    local v
+    if [[ -f "$WTX_ROOT/VERSION" ]]; then
+        v="$(cat "$WTX_ROOT/VERSION")"
+    else
+        v="0.1.0-dev"
+    fi
+    # Trim whitespace (including CRLF) and an optional leading `v`.
+    v="$(printf '%s' "$v" | tr -d '[:space:]\r')"
+    v="${v#v}"
+    printf '%s\n' "$v"
+}
+
+# --- Usage --------------------------------------------------------------------
+
+_wtx_usage() {
+    cat <<EOF
+wtx — git worktree management
+
+USAGE:
+  wtx <command> [args...]
+
+COMMANDS:
+  start [args]    Create a new worktree (interactive or scripted)
+  done [args]     Finalise, push, open PR, and clean up a worktree
+  status [args]   Dashboard: list, manage, rebase worktrees
+  init            Generate wtx.toml in the current workspace
+  doctor          Check dependencies and install invariants
+  version         Print wtx version
+  help            Show this help
+
+ENVIRONMENT:
+  WTX_ROOT         $WTX_ROOT
+  WORKSPACE_ROOT   $WORKSPACE_ROOT
+  WTX_CONFIG       optional override for wtx.toml path
+
+See \`wtx doctor\` to verify your environment.
+EOF
+}
+
+# --- Doctor -------------------------------------------------------------------
+
+# _wtx_check <cmd> <required|optional> [label]
+_wtx_check() {
+    local cmd="$1" kind="$2" label="${3:-$1}"
+    if command -v "$cmd" >/dev/null 2>&1; then
+        printf '  [ OK ] %-10s %s\n' "$label" "$(command -v "$cmd")"
+        return 0
+    fi
+    if [[ "$kind" = "required" ]]; then
+        printf '  [FAIL] %-10s missing (required)\n' "$label"
+        return 1
+    fi
+    printf '  [WARN] %-10s missing (optional)\n' "$label"
+    return 0
+}
+
+# _wtx_check_install_file <relpath-under-WTX_ROOT> [label]
+_wtx_check_install_file() {
+    local rel="$1" label="${2:-$1}"
+    if [[ -f "$WTX_ROOT/$rel" ]]; then
+        printf '  [ OK ] %-32s %s\n' "$label" "$WTX_ROOT/$rel"
+        return 0
+    fi
+    printf '  [FAIL] %-32s missing at %s\n' "$label" "$WTX_ROOT/$rel"
+    return 1
+}
+
+_wtx_doctor() {
+    local fail=0
+    echo "wtx doctor — environment check"
+    echo
+    echo "Required:"
+    _wtx_check git     required || fail=1
+    _wtx_check bash    required || fail=1
+    _wtx_check python3 required || fail=1
+    _wtx_check curl    required || fail=1
+    echo
+    echo "Optional:"
+    _wtx_check gum     optional "gum"
+    _wtx_check claude  optional "claude"
+    _wtx_check timeout optional "timeout"
+    _wtx_check jq      optional "jq"
+    echo
+    echo "Install:"
+    _wtx_check_install_file "lib/wtx-config.sh"        "lib/wtx-config.sh"        || fail=1
+    _wtx_check_install_file "scripts/worktree-start.sh"  "scripts/worktree-start.sh"  || fail=1
+    _wtx_check_install_file "scripts/worktree-done.sh"   "scripts/worktree-done.sh"   || fail=1
+    _wtx_check_install_file "scripts/worktree-status.sh" "scripts/worktree-status.sh" || fail=1
+    echo
+    echo "Paths:"
+    echo "  WTX_ROOT       = $WTX_ROOT"
+    echo "  WORKSPACE_ROOT = $WORKSPACE_ROOT"
+    if [[ -f "$WTX_ROOT/lib/wtx-config.sh" ]]; then
+        # shellcheck source=../lib/wtx-config.sh disable=SC1091
+        source "$WTX_ROOT/lib/wtx-config.sh" 2>/dev/null || true
+        if command -v _wtx_config_resolve_path >/dev/null 2>&1; then
+            local cfg
+            cfg="$(_wtx_config_resolve_path 2>/dev/null || true)"
+            echo "  CONFIG         = ${cfg:-<none found>}"
+        else
+            echo "  CONFIG         = <loader available, resolver missing>"
+        fi
+    else
+        echo "  CONFIG         = <lib/wtx-config.sh not found>"
+    fi
+    echo
+    if [[ $fail -ne 0 ]]; then
+        echo "Some required dependencies or install files are missing. See above."
+        return 1
+    fi
+    echo "All required dependencies and install files present."
+    return 0
+}
+
+# --- Init ---------------------------------------------------------------------
+
+# Prompt until the answer is non-empty.
+_wtx_prompt_nonempty() {
+    local prompt="$1" var=""
+    while true; do
+        read -r -p "$prompt" var < /dev/tty || true
+        if [[ -n "$var" ]]; then
+            printf '%s' "$var"
+            return 0
+        fi
+        echo "  (required — please enter a value)" >&2
+    done
+}
+
+# Prompt until the answer matches one of the allowed tokens (pipe-separated).
+_wtx_prompt_choice() {
+    local prompt="$1" allowed="$2" default="$3" var=""
+    while true; do
+        read -r -p "$prompt" var < /dev/tty || true
+        var="${var:-$default}"
+        case "|$allowed|" in
+            *"|$var|"*) printf '%s' "$var"; return 0 ;;
+        esac
+        echo "  (must be one of: ${allowed//|/, })" >&2
+    done
+}
+
+_wtx_init() {
+    _wtx_require_tty || return 1
+
+    local out="$WORKSPACE_ROOT/wtx.toml"
+    if [[ -e "$out" ]]; then
+        printf 'wtx init: refusing to overwrite existing %s\n' "$out" >&2
+        return 1
+    fi
+
+    echo "wtx init — generating $out"
+    echo "Press Enter to accept defaults shown in [brackets]."
+    echo
+
+    local forge_type forge_org projects_csv markers_csv base_branch branch_prefix
+
+    forge_type="$(_wtx_prompt_choice "Forge type [bitbucket|github|gitlab] (bitbucket): " "bitbucket|github|gitlab" "bitbucket")"
+    forge_org="$(_wtx_prompt_nonempty "Forge org/owner: ")"
+
+    read -r -p "Known project dirs, comma-separated (optional): " projects_csv < /dev/tty || true
+
+    read -r -p "Project root markers, comma-separated [.git]: " markers_csv < /dev/tty || true
+    markers_csv="${markers_csv:-.git}"
+
+    read -r -p "Default base branch [main]: " base_branch < /dev/tty || true
+    base_branch="${base_branch:-main}"
+
+    read -r -p "Default branch prefix [feature]: " branch_prefix < /dev/tty || true
+    branch_prefix="${branch_prefix:-feature}"
+
+    local projects_toml markers_toml
+    projects_toml="$(_wtx_csv_to_toml_array "${projects_csv:-}")"
+    markers_toml="$(_wtx_csv_to_toml_array "$markers_csv")"
+
+    # Escape scalars before embedding between "..." quotes.
+    local e_forge_type e_forge_org e_base e_prefix
+    e_forge_type="$(_wtx_toml_escape "$forge_type")"
+    e_forge_org="$(_wtx_toml_escape "$forge_org")"
+    e_base="$(_wtx_toml_escape "$base_branch")"
+    e_prefix="$(_wtx_toml_escape "$branch_prefix")"
+
+    cat > "$out" <<EOF
+# wtx configuration — generated by \`wtx init\`
+# See wtx.example.toml for the full schema.
+
+[forge]
+type = "$e_forge_type"
+org = "$e_forge_org"
+
+[projects]
+list = $projects_toml
+
+[detection]
+markers = $markers_toml
+
+[defaults]
+base_branch = "$e_base"
+branch_prefix = "$e_prefix"
+
+[worktree]
+registry_path = ".claude/worktree-registry.md"
+builtin_path = ".claude/worktrees"
+# setup_hook = "plugins/android-setup.sh"
+
+[jira.projects]
+# Map repo_name = "JIRA_KEY" here, e.g.
+# my-repo = "PROJ"
+EOF
+
+    printf 'Wrote %s\n' "$out"
+}
+
+# --- Dispatcher ---------------------------------------------------------------
+
+# Preflight + exec a child script, with a helpful error when the install is broken.
+_wtx_exec_script() {
+    local target="$WTX_ROOT/scripts/$1"
+    shift
+    if [[ ! -f "$target" ]]; then
+        printf "wtx: child script not found: %s\n" "$target" >&2
+        printf "     run 'wtx doctor' to check your install.\n" >&2
+        exit 2
+    fi
+    if [[ ! -x "$target" ]]; then
+        # Fall back to `bash`; don't fail just because the executable bit was
+        # stripped (e.g. by zip-based installs).
+        exec bash "$target" "$@"
+    fi
+    exec "$target" "$@"
+}
+
+# Only run the dispatcher when executed, not when sourced for testing.
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+    return 0 2>/dev/null || true
+fi
+
+cmd="${1:-help}"
+if [[ $# -gt 0 ]]; then shift; fi
+
+case "$cmd" in
+    start)
+        _wtx_exec_script "worktree-start.sh" "$@"
+        ;;
+    done)
+        _wtx_exec_script "worktree-done.sh" "$@"
+        ;;
+    status)
+        _wtx_exec_script "worktree-status.sh" "$@"
+        ;;
+    init)
+        _wtx_init "$@"
+        ;;
+    doctor)
+        _wtx_doctor "$@"
+        ;;
+    version|--version|-V)
+        _wtx_version
+        ;;
+    help|--help|-h)
+        _wtx_usage
+        ;;
+    *)
+        printf 'wtx: unknown command: %s\n\n' "$cmd" >&2
+        _wtx_usage >&2
+        exit 2
+        ;;
+esac

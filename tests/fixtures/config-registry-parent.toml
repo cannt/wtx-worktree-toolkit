@@ -1,0 +1,4 @@
+# Fixture: parent-relative registry_path falls back to the default path.
+
+[worktree]
+registry_path = "../wtx-registry-parent.md"
