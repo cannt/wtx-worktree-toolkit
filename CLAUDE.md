@@ -111,3 +111,13 @@ only for a broad architecture overview when a query doesn't surface enough.
 **Freshness:** a git `post-commit`/`post-checkout` hook rebuilds the graph
 automatically (AST-only, no API cost). Only run `graphify update .` manually if you
 need the graph current against changes you haven't committed yet.
+
+## Autonomous story-automator runs
+
+**Exception — `bmad-story-automator` workers:** when you are a `bmad-story-automator`
+worker (e.g. a `dev-story` agent running under `claude-rotate-run --automator`), you
+carry the user's standing session-level authorization to make **local commits** for the
+story you implement — commit autonomously, without pausing to ask. Before each commit,
+run `bash scripts/secret-scan.sh` and confirm it exits clean, then follow this repo's
+commit conventions. **Local commits only — do not push** (this repo has a remote at
+`cannt/wtx-worktree-toolkit`; pushing is always the user's call).

@@ -24,6 +24,17 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "env PROJECT_ROOT=/Users/juanangeltrujillo/Projects/wtx /Users/juanangeltrujillo/Projects/wtx/.claude/skills/bmad-story-automator/scripts/story-automator stop-hook",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }
