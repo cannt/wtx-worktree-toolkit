@@ -84,3 +84,30 @@ When editing scripts, do not add new hardcoded Acme values. If you find an exist
 3. Update call sites.
 
 The Jira project key, forge org, forge type, project list, detection markers, base branch, and branch prefix are already config-driven — use them as the template.
+
+## graphify (knowledge graph — use it selectively)
+
+This repo has a graphify knowledge graph at `graphify-out/` (god nodes, community
+structure, cross-file relationships across `bin/`, `lib/`, `scripts/`, `hooks/`,
+`plugins/`, `tests/`, and the docs). It is **targeted tooling, not an every-task
+step** — reach for it only when a whole-codebase view actually helps.
+
+**Use the graph first** (only when `graphify-out/graph.json` exists) for:
+- "How does X work end-to-end?" / onboarding / architecture questions that span files.
+- Tracing a flow across the script → lib → config layers (e.g. how `wtx start` reaches `wtx_config_get`).
+- Impact analysis before a change: `graphify affected "<symbol>"` — what depends on this?
+- Finding the relationship between two things: `graphify path "<A>" "<B>"`.
+- Explaining one concept and its neighbors: `graphify explain "<concept>"`.
+
+Default query: `graphify query "<question>"` — returns a scoped subgraph, usually far
+smaller than reading files one by one or grepping. Read `graphify-out/GRAPH_REPORT.md`
+only for a broad architecture overview when a query doesn't surface enough.
+
+**Skip the graph** (just Read/Edit/grep normally) for:
+- Single-file edits, syntax fixes, or anything where you already know the file.
+- Running or reading tests; trivial lookups where a direct grep/read is faster.
+- Anything depending on **uncommitted** changes — the graph reflects the last commit.
+
+**Freshness:** a git `post-commit`/`post-checkout` hook rebuilds the graph
+automatically (AST-only, no API cost). Only run `graphify update .` manually if you
+need the graph current against changes you haven't committed yet.

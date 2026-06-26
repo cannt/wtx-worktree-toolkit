@@ -1,0 +1,37 @@
+# Scope the graphify knowledge graph to the wtx tool itself.
+# graphify prefers this file and, when present in a directory, does NOT also read
+# that directory's .gitignore — so the relevant .gitignore patterns are mirrored here.
+#
+# Without this file, `graphify update` (run by the git post-commit hook) re-scans the
+# whole tree and pulls vendored agent/BMAD tooling into the graph, ballooning it from
+# ~270 nodes to ~775 and drowning the wtx signal in scaffolding.
+
+# Generated graph artifacts
+graphify-out/
+
+# Vendored AI-assistant / BMAD tooling — present in the working dir, not part of wtx
+.opencode/
+.agents/
+.claude/
+_bmad/
+_bmad-output/
+
+# OS / editor noise
+.DS_Store
+*.swp
+*.swo
+*~
+
+# iCloud Drive conflict-copy duplicates ("name 2.ext", "dir 2/")
+* 2
+* 2.*
+
+# Local-only config that mirrors .gitignore (never part of the tracked tool)
+/wtx.toml
+wtx.local.toml
+.worktree-projects
+.env
+*.env
+*.secret
+secrets.*
+docs/project-scan-report.json

@@ -25,3 +25,7 @@ wtx.local.toml
 *.env
 *.secret
 secrets.*
+
+# graphify knowledge-graph artifacts — generated locally, rebuilt on commit by
+# the git post-commit hook. Not part of the wtx tool; kept out of git and iCloud.
+graphify-out/
