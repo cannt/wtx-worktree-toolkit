@@ -13,3 +13,15 @@ _bmad/
 # iCloud Drive conflict-copy duplicates ("name 2.ext", "dir 2/")
 * 2.*
 * 2
+
+# Personal / local config — never commit real org, Jira keys, or tokens.
+# wtx.example.toml is the tracked template; the real config is wtx.toml.
+/wtx.toml
+wtx.local.toml
+.worktree-projects
+
+# Secrets and environment files (put rotated tokens here, never in tracked files)
+.env
+*.env
+*.secret
+secrets.*
