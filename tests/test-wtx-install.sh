@@ -143,8 +143,16 @@ stderr_file="$tmpdir/stderr"
 stdout="$(cat "$stdout_file")"
 stderr="$(cat "$stderr_file")"
 assert_eq "wizard preflight: exit 0" 0 "$rc"
-assert_eq "wizard preflight: exact no-gum notice" "note: gum not found — using plain prompts (install with: brew install gum)" "$stdout"
-assert_eq "wizard preflight: no stderr" "" "$stderr"
+# Story 1.2: wizard now runs interactive steps after preflight; stdout contains
+# banner + dry-run lines in addition to the no-gum notice. Use contains.
+assert_contains "wizard preflight: no-gum notice present" "note: gum not found" "$stdout"
+# stderr may contain tty-unavailable messages when stdin is not a tty (interactive
+# prompts abort via tui_abort_check); only verify the wizard does NOT emit a hard
+# error about preflight (git check / lib source) — not requiring stderr to be empty.
+case "$stderr" in
+    *"wtx install:"*) FAILS=$((FAILS+1)); TOTAL=$((TOTAL+1)); printf 'FAIL  wizard preflight: no preflight error on stderr\n' ;;
+    *) TOTAL=$((TOTAL+1)); printf 'PASS  wizard preflight: no preflight error on stderr\n' ;;
+esac
 leftovers=$(find "$tmpdir" -name '.wtx-install-tmp.*' -print)
 assert_eq "wizard preflight: temp cleaned" "" "$leftovers"
 rm -rf "$tmpdir"
@@ -161,7 +169,11 @@ EOF
 chmod +x "$bindir/gum"
 out=$(cd "$tmpdir" && PATH="$bindir:/usr/bin:/bin" WTX_ROOT="$REPO_ROOT" WORKSPACE_ROOT="$tmpdir" bash "$WIZARD" --dry-run 2>&1); rc=$?
 assert_eq "wizard gum: exit 0 when available" 0 "$rc"
-assert_eq "wizard gum: no fallback notice" "" "$out"
+# Story 1.2: stdout now includes dry-run lines; only check fallback notice is absent
+case "$out" in
+    *"note: gum not found"*) FAILS=$((FAILS+1)); TOTAL=$((TOTAL+1)); printf 'FAIL  wizard gum: no fallback notice\n' ;;
+    *) TOTAL=$((TOTAL+1)); printf 'PASS  wizard gum: no fallback notice\n' ;;
+esac
 rm -rf "$tmpdir"
 
 # -- Case 9: direct symlink invocation resolves WTX_ROOT and WORKSPACE_ROOT
@@ -193,6 +205,389 @@ rm -rf "$tmpdir"
 # -- Case 11: wizard syntax
 bash -n "$WIZARD"; rc=$?
 assert_eq "wizard syntax: bash -n" 0 "$rc"
+
+# ---------------------------------------------------------------------------
+# Story 1.2 tests: _wtx_install_emit_toml round-trip, Jira empty, plugin map
+# ---------------------------------------------------------------------------
+
+# Helper: source wizard internals without running _wtx_install_run.
+# Sets up the minimum environment needed for _wtx_install_emit_toml to work.
+_setup_emit_env() {
+    local tmpdir="$1"
+    ( cd "$tmpdir" && git init -q ) 2>/dev/null
+    export WTX_ROOT="$REPO_ROOT"
+    export WORKSPACE_ROOT="$tmpdir"
+    export WTX_INSTALL_DRY_RUN=0
+    export GUM_AVAILABLE=0
+    export _WTX_INSTALL_TMP="$tmpdir/.wtx-install-tmp.test"
+    _WTX_LEDGER_KEYS=()
+    _WTX_LEDGER_VALS=()
+    _WTX_JIRA_REPOS=()
+    _WTX_JIRA_KEYS=()
+    # Source the primitives lib
+    source "$LIB"
+    # Source config loader (for round-trip reads)
+    source "$REPO_ROOT/lib/wtx-config.sh" 2>/dev/null || true
+    # Define TUI stubs (no tty available in test)
+    tui_style_box() { for l in "$@"; do echo "  $l"; done; }
+    tui_choose() { :; }
+    tui_input() { echo "${2:-}"; }
+    tui_confirm() { return 1; }
+}
+
+# -- Case 12: emit_toml — user values round-trip and no example placeholders survive
+(
+    tmpdir="$(mktemp -d)"
+    _setup_emit_env "$tmpdir"
+    # Source emit function from wizard
+    source "$WIZARD" --dry-run 2>/dev/null || true
+    # (sourcing runs _wtx_install_run in a subshell context; we need to re-source the functions)
+) 2>/dev/null; true
+
+# Source just the functions (not the entry point) by wrapping
+tmpdir12="$(mktemp -d)"
+( cd "$tmpdir12" && git init -q ) 2>/dev/null
+export WTX_ROOT="$REPO_ROOT"
+export WORKSPACE_ROOT="$tmpdir12"
+export WTX_INSTALL_DRY_RUN=0
+export GUM_AVAILABLE=0
+export _WTX_INSTALL_TMP="$tmpdir12/.wtx-test-tmp"
+_WTX_LEDGER_KEYS=()
+_WTX_LEDGER_VALS=()
+_WTX_JIRA_REPOS=()
+_WTX_JIRA_KEYS=()
+source "$LIB"
+source "$REPO_ROOT/lib/wtx-config.sh" 2>/dev/null || true
+tui_style_box() { for l in "$@"; do echo "  $l"; done; }
+tui_choose() { echo "${3:-github}"; }  # pick first non-prompt arg
+tui_input() { echo "${2:-}"; }
+tui_confirm() { return 1; }
+
+# Now source just the function definitions from the wizard (not the entry call)
+# We do this by extracting and sourcing up to _wtx_install_run invocation
+wizard_funcs="$(grep -n '_wtx_install_run "\$@"' "$WIZARD" | head -1 | cut -d: -f1)"
+wizard_head="$(head -n "$((wizard_funcs - 1))" "$WIZARD")"
+eval "$wizard_head" 2>/dev/null || true
+
+# Set up variables that _wtx_install_emit_toml reads
+forge_type="github"
+forge_org="myorg"
+forge_base_url=""
+projects_csv="web,api"
+detection_csv="Cargo.toml"
+base_branch="main"
+branch_prefix="feat"
+setup_hook="plugins/android-setup.sh"
+
+emitted="$(_wtx_install_emit_toml 2>/dev/null)"
+
+# Round-trip: write to tmp file and read back with wtx_config_get
+echo "$emitted" > "$tmpdir12/wtx.toml"
+unset _WTX_CONFIG_LOADED
+export WTX_CONFIG="$tmpdir12/wtx.toml"
+source "$REPO_ROOT/lib/wtx-config.sh" 2>/dev/null || true
+
+rt_type="$(wtx_config_get "forge.type" "")"
+rt_org="$(wtx_config_get "forge.org" "")"
+rt_branch="$(wtx_config_get "defaults.base_branch" "")"
+rt_prefix="$(wtx_config_get "defaults.branch_prefix" "")"
+
+assert_eq "emit: forge.type round-trip" "github" "$rt_type"
+assert_eq "emit: forge.org round-trip" "myorg" "$rt_org"
+assert_eq "emit: defaults.base_branch round-trip" "main" "$rt_branch"
+assert_eq "emit: defaults.branch_prefix round-trip" "feat" "$rt_prefix"
+
+# No example placeholders
+case "$emitted" in
+    *'org = "acme"'*) FAILS=$((FAILS+1)); TOTAL=$((TOTAL+1)); printf 'FAIL  emit: no acme placeholder\n' ;;
+    *) TOTAL=$((TOTAL+1)); printf 'PASS  emit: no acme placeholder\n' ;;
+esac
+case "$emitted" in
+    *'"web"'*'"mobile"'*'"backend"'*) FAILS=$((FAILS+1)); TOTAL=$((TOTAL+1)); printf 'FAIL  emit: no web/mobile/backend placeholder list\n' ;;
+    *) TOTAL=$((TOTAL+1)); printf 'PASS  emit: no web/mobile/backend placeholder list\n' ;;
+esac
+
+# projects.list contains user value
+assert_contains "emit: projects.list has user values" '"web"' "$emitted"
+assert_contains "emit: projects.list has user values (api)" '"api"' "$emitted"
+
+# detection.markers contains user value
+assert_contains "emit: detection.markers has Cargo.toml" '"Cargo.toml"' "$emitted"
+
+# No stray settings.gradle placeholder (would only be present if user chose Gradle)
+case "$emitted" in
+    *'"settings.gradle"'*) FAILS=$((FAILS+1)); TOTAL=$((TOTAL+1)); printf 'FAIL  emit: no settings.gradle placeholder\n' ;;
+    *) TOTAL=$((TOTAL+1)); printf 'PASS  emit: no settings.gradle placeholder\n' ;;
+esac
+
+rm -rf "$tmpdir12"
+unset WTX_CONFIG
+
+# -- Case 13: emit_toml — zero Jira pairs → [jira.projects] section with only a comment
+tmpdir13="$(mktemp -d)"
+( cd "$tmpdir13" && git init -q ) 2>/dev/null
+_WTX_JIRA_REPOS=()
+_WTX_JIRA_KEYS=()
+forge_type="gitlab"
+forge_org="team"
+forge_base_url=""
+projects_csv=""
+detection_csv=""
+base_branch="main"
+branch_prefix="feature"
+setup_hook=""
+
+emitted13="$(_wtx_install_emit_toml 2>/dev/null)"
+
+# Must contain [jira.projects] section header
+assert_contains "jira empty: section header present" '[jira.projects]' "$emitted13"
+
+# Must contain a comment line in that section
+assert_contains "jira empty: comment present" '# repo = ' "$emitted13"
+
+# Must NOT contain any uncommented key = "value" lines under jira.projects
+jira_block="$(echo "$emitted13" | awk '/^\[jira\.projects\]/{found=1; next} found && /^\[/{found=0} found && /^[^#]/{print}')"
+case "$jira_block" in
+    *'= "'*)
+        FAILS=$((FAILS+1)); TOTAL=$((TOTAL+1))
+        printf 'FAIL  jira empty: no fabricated keys\n'
+        ;;
+    *)
+        TOTAL=$((TOTAL+1))
+        printf 'PASS  jira empty: no fabricated keys\n'
+        ;;
+esac
+
+rm -rf "$tmpdir13"
+
+# -- Case 14: emit_toml — setup_hook omitted when "None" selected
+_WTX_JIRA_REPOS=()
+_WTX_JIRA_KEYS=()
+forge_type="github"
+forge_org="co"
+forge_base_url=""
+projects_csv=""
+detection_csv=""
+base_branch="main"
+branch_prefix="feature"
+setup_hook=""
+
+emitted14="$(_wtx_install_emit_toml 2>/dev/null)"
+# Check that no uncommented setup_hook line is present (commented-out is allowed)
+uncommented_hook="$(echo "$emitted14" | grep '^setup_hook = "' || true)"
+case "$uncommented_hook" in
+    *'setup_hook = "'*)
+        FAILS=$((FAILS+1)); TOTAL=$((TOTAL+1))
+        printf 'FAIL  emit: setup_hook absent when empty\n'
+        ;;
+    *)
+        TOTAL=$((TOTAL+1))
+        printf 'PASS  emit: setup_hook absent when empty\n'
+        ;;
+esac
+
+# -- Case 15: step 8 plugin selection mapping — filename → plugins/<filename>
+tmpdir15="$(mktemp -d)"
+( cd "$tmpdir15" && git init -q ) 2>/dev/null
+plugin_root15="$tmpdir15/wtx"
+mkdir -p "$plugin_root15/plugins"
+cat > "$plugin_root15/plugins/mysetup.sh" <<'PLUGEOF'
+#!/bin/bash
+# wtx-plugin-desc: My setup plugin
+PLUGEOF
+WTX_ROOT="$plugin_root15"
+unset _WTX_INSTALL_LIB_LOADED
+source "$LIB"
+
+# Simulate Step 8 logic: discover → choose first plugin label
+discovered="$(wtx_install_discover_plugins)"
+# discovered = "mysetup.sh\tMy setup plugin"
+chosen_file="$(echo "$discovered" | cut -f1)"
+chosen_desc="$(echo "$discovered" | cut -f2)"
+chosen_label="$chosen_file — $chosen_desc"
+# Resolve back as the wizard does
+resolved_hook="plugins/${chosen_label%% — *}"
+assert_eq "plugin map: filename resolves to plugins/<filename>" "plugins/mysetup.sh" "$resolved_hook"
+
+rm -rf "$tmpdir15"
+WTX_ROOT="$REPO_ROOT"
+
+# -- Case 16: no interactive read from /dev/tty in worktree-install.sh outside tui_* stubs
+# AD-10: prompts must go via tui_* functions. The stubs are all single-line defs
+# (tui_xxx() { ... read ... }) so grep filters them out by function-def pattern.
+# Pipeline reads like `while ... read -r var` that parse subprocess output are
+# allowed — they do NOT prompt the user from /dev/tty.
+tty_reads="$(grep -n 'read.*\/dev\/tty\|read -r -p\|read -p' "$WIZARD" \
+    | grep -v 'tui_confirm()\|tui_input()\|tui_choose()' \
+    | grep -v '^\s*#' || true)"
+case "$tty_reads" in
+    "")
+        TOTAL=$((TOTAL+1))
+        printf 'PASS  AD-10: no interactive read outside tui_* stubs\n'
+        ;;
+    *)
+        FAILS=$((FAILS+1)); TOTAL=$((TOTAL+1))
+        printf 'FAIL  AD-10: interactive read found outside tui_* stubs\n'
+        printf '      %s\n' "$tty_reads"
+        ;;
+esac
+
+# ---------------------------------------------------------------------------
+# Story 1.2 QA gap coverage (Cases 17–24): banner content, Step 2 ledger,
+# forge options, full round-trip via wtx_config_get (base_url / jira / lists /
+# worktree defaults), detection .git default, and Step 8 None/Custom mapping.
+# Wizard function defs were eval'd into this shell at Case 12, so the
+# _wtx_install_* helpers are callable directly.
+# ---------------------------------------------------------------------------
+
+# -- Case 17: Step 1 banner shows workspace path, WTX root, and Ctrl-C notice (AC 1)
+export WTX_ROOT="$REPO_ROOT"
+export WORKSPACE_ROOT="/tmp/wtx-banner-ws"
+tui_style_box() { for l in "$@"; do echo "  $l"; done; }
+banner_out="$(_wtx_install_step_banner)"
+assert_contains "banner: shows workspace path" "Workspace: /tmp/wtx-banner-ws" "$banner_out"
+assert_contains "banner: shows WTX root" "WTX root:  $REPO_ROOT" "$banner_out"
+assert_contains "banner: shows Ctrl-C abort notice" "Ctrl-C" "$banner_out"
+
+# -- Case 18: Step 2 — wtx already resolves to $WTX_ROOT/bin/wtx → skip + ledger (AC 2)
+tmpdir18="$(mktemp -d)"
+bindir18="$tmpdir18/bin"
+mkdir -p "$bindir18"
+ln -sf "$REPO_ROOT/bin/wtx" "$bindir18/wtx"
+out18file="$tmpdir18/out"
+tui_input() { echo "${2:-}"; }
+_WTX_LEDGER_KEYS=()
+_WTX_LEDGER_VALS=()
+WTX_INSTALL_DRY_RUN=0 PATH="$bindir18:$PATH" _wtx_install_step2_binary > "$out18file"
+out18="$(cat "$out18file")"
+assert_contains "step2 on-path: prints already-on-PATH info" "[✓] wtx already on PATH" "$out18"
+assert_eq "step2 on-path: ledger key" "symlink" "${_WTX_LEDGER_KEYS[0]:-}"
+assert_eq "step2 on-path: ledger value skipped" "skipped (already on PATH)" "${_WTX_LEDGER_VALS[0]:-}"
+rm -rf "$tmpdir18"
+
+# -- Case 19: Step 2 — not on PATH → delegate; exit 0 → ledger done, non-zero → failed (AC 3)
+# Stub the write chokepoint to isolate the rc→ledger mapping from a real install.sh run.
+WTX_INSTALL_DRY_RUN=0
+tui_input() { echo "${2:-}"; }
+wtx_install_write_or_dryrun() { return 0; }
+_WTX_LEDGER_KEYS=()
+_WTX_LEDGER_VALS=()
+PATH="/usr/bin:/bin" _wtx_install_step2_binary >/dev/null; rc=$?
+assert_eq "step2 off-path: exit 0 returns 0" 0 "$rc"
+assert_eq "step2 off-path: ledger key" "symlink" "${_WTX_LEDGER_KEYS[0]:-}"
+assert_eq "step2 off-path: exit 0 → done" "done" "${_WTX_LEDGER_VALS[0]:-}"
+wtx_install_write_or_dryrun() { return 1; }
+_WTX_LEDGER_KEYS=()
+_WTX_LEDGER_VALS=()
+PATH="/usr/bin:/bin" _wtx_install_step2_binary >/dev/null; rc=$?
+assert_eq "step2 off-path: non-zero returns rc" 1 "$rc"
+assert_eq "step2 off-path: non-zero → failed" "failed" "${_WTX_LEDGER_VALS[0]:-}"
+# Restore the real primitive for any later case.
+unset -f wtx_install_write_or_dryrun
+unset _WTX_INSTALL_LIB_LOADED
+source "$LIB"
+
+# -- Case 20: Step 3 forge options are exactly github / gitlab / bitbucket (AC 5)
+forge_choose_line="$(grep -n 'tui_choose "Forge type"' "$WIZARD" || true)"
+assert_contains "forge: option github" '"github"' "$forge_choose_line"
+assert_contains "forge: option gitlab" '"gitlab"' "$forge_choose_line"
+assert_contains "forge: option bitbucket" '"bitbucket"' "$forge_choose_line"
+case "$forge_choose_line" in
+    *gitea*|*"sourcehut"*|*"azure"*)
+        FAILS=$((FAILS+1)); TOTAL=$((TOTAL+1)); printf 'FAIL  forge: no extra forge options\n' ;;
+    *)
+        TOTAL=$((TOTAL+1)); printf 'PASS  forge: no extra forge options\n' ;;
+esac
+
+# -- Case 21: full round-trip via wtx_config_get — base_url, jira pairs, lists,
+#             worktree defaults, setup_hook all reflect user input (AC 7, 8)
+tmpdir21="$(mktemp -d)"
+( cd "$tmpdir21" && git init -q ) 2>/dev/null
+export WTX_ROOT="$REPO_ROOT"
+export WORKSPACE_ROOT="$tmpdir21"
+forge_type="gitlab"
+forge_org="myorg"
+forge_base_url="https://git.example.internal"
+projects_csv="web, api ,worker"
+detection_csv="Cargo.toml"
+base_branch="develop"
+branch_prefix="feat"
+setup_hook="plugins/android-setup.sh"
+_WTX_JIRA_REPOS=("web" "api")
+_WTX_JIRA_KEYS=("WEB" "API")
+emitted21="$(_wtx_install_emit_toml 2>/dev/null)"
+echo "$emitted21" > "$tmpdir21/wtx.toml"
+unset _WTX_CONFIG_LOADED
+export WTX_CONFIG="$tmpdir21/wtx.toml"
+source "$REPO_ROOT/lib/wtx-config.sh" 2>/dev/null || true
+assert_eq "rt: forge.base_url" "https://git.example.internal" "$(wtx_config_get "forge.base_url" "")"
+assert_eq "rt: jira.projects.web" "WEB" "$(wtx_config_get "jira.projects.web" "")"
+assert_eq "rt: jira.projects.api" "API" "$(wtx_config_get "jira.projects.api" "")"
+assert_eq "rt: projects.list trims+splits" "$(printf 'web\napi\nworker')" "$(wtx_config_get_list "projects.list")"
+assert_eq "rt: detection.markers" "Cargo.toml" "$(wtx_config_get_list "detection.markers")"
+assert_eq "rt: worktree.registry_path default" ".claude/worktree-registry.md" "$(wtx_config_get "worktree.registry_path" "")"
+assert_eq "rt: worktree.builtin_path default" ".claude/worktrees" "$(wtx_config_get "worktree.builtin_path" "")"
+assert_eq "rt: worktree.setup_hook" "plugins/android-setup.sh" "$(wtx_config_get "worktree.setup_hook" "")"
+unset WTX_CONFIG
+rm -rf "$tmpdir21"
+
+# -- Case 22: detection .git default (empty CSV) → comment only, no markers key (AC 5)
+_WTX_JIRA_REPOS=()
+_WTX_JIRA_KEYS=()
+forge_type="github"
+forge_org="co"
+forge_base_url=""
+projects_csv=""
+detection_csv=""
+base_branch="main"
+branch_prefix="feature"
+setup_hook=""
+emitted22="$(_wtx_install_emit_toml 2>/dev/null)"
+assert_contains "detection default: commented marker hint present" "# markers = " "$emitted22"
+uncommented_markers="$(echo "$emitted22" | grep '^markers = ' || true)"
+assert_eq "detection default: no uncommented markers key" "" "$uncommented_markers"
+# base_url not self-hosted → commented, not emitted as a live key
+uncommented_baseurl="$(echo "$emitted22" | grep '^base_url = ' || true)"
+assert_eq "forge: base_url omitted when not self-hosted" "" "$uncommented_baseurl"
+
+# -- Case 23: Step 8 — None selection yields empty setup_hook (AC 6)
+export WTX_ROOT="$REPO_ROOT"
+tui_choose() { echo "None"; }
+tui_input() { echo "${2:-}"; }
+setup_hook="sentinel"
+_wtx_install_step8_hook
+assert_eq "step8 None: setup_hook empty" "" "$setup_hook"
+
+# -- Case 24: Step 8 — Custom path… captures the user-supplied relative path (AC 6)
+tui_choose() { echo "Custom path…"; }
+tui_input() { echo "scripts/my-hook.sh"; }
+setup_hook="sentinel"
+_wtx_install_step8_hook
+assert_eq "step8 Custom: setup_hook is user path" "scripts/my-hook.sh" "$setup_hook"
+
+# -- Case 25: _wtx_install_run propagates critical failures with ledger evidence
+_wtx_install_preflight() {
+    _WTX_LEDGER_KEYS=()
+    _WTX_LEDGER_VALS=()
+    WTX_INSTALL_DRY_RUN=0
+    WORKSPACE_ROOT="/tmp/wtx-run-test"
+    export WTX_INSTALL_DRY_RUN WORKSPACE_ROOT
+    return 0
+}
+_wtx_install_step_banner() { return 0; }
+_wtx_install_steps3_7_config() { return 0; }
+_wtx_install_step8_hook() { return 0; }
+
+_wtx_install_step2_binary() { return 7; }
+_wtx_install_run >/dev/null 2>&1; rc=$?
+assert_eq "run: step2 failure returns rc" 7 "$rc"
+
+_wtx_install_step2_binary() { return 0; }
+wtx_install_write_or_dryrun() { return 9; }
+_wtx_install_run >/dev/null 2>&1; rc=$?
+assert_eq "run: TOML write failure returns rc" 9 "$rc"
+assert_eq "run: TOML write failure ledger key" "config" "${_WTX_LEDGER_KEYS[0]:-}"
+assert_eq "run: TOML write failure ledger value" "failed" "${_WTX_LEDGER_VALS[0]:-}"
 
 echo
 if [[ $FAILS -eq 0 ]]; then
