@@ -565,7 +565,111 @@ setup_hook="sentinel"
 _wtx_install_step8_hook
 assert_eq "step8 Custom: setup_hook is user path" "scripts/my-hook.sh" "$setup_hook"
 
-# -- Case 25: _wtx_install_run propagates critical failures with ledger evidence
+# -- Case 25: Step 9 decline records skipped and does not invoke subprocess
+tmpdir25="$(mktemp -d)"
+export WTX_ROOT="$REPO_ROOT"
+export WORKSPACE_ROOT="$tmpdir25"
+WTX_INSTALL_DRY_RUN=0
+_WTX_LEDGER_KEYS=()
+_WTX_LEDGER_VALS=()
+step9_calls=0
+step9_args=""
+tui_style_box() { for l in "$@"; do echo "  $l"; done; }
+tui_confirm() { return 1; }
+wtx_install_write_or_dryrun() {
+    step9_calls=$((step9_calls + 1))
+    step9_args="$*"
+    return 0
+}
+step9_out_file="$tmpdir25/step9.out"
+_wtx_install_step9_claude_hooks > "$step9_out_file"
+rc=$?
+step9_out="$(cat "$step9_out_file")"
+assert_eq "step9 decline: returns 0" 0 "$rc"
+assert_contains "step9 info: lists create hook" "worktree-create.sh" "$step9_out"
+assert_contains "step9 info: lists detect hook" "worktree-detect.sh" "$step9_out"
+assert_contains "step9 info: lists remove hook" "worktree-remove.sh" "$step9_out"
+assert_eq "step9 decline: ledger key" "hooks" "${_WTX_LEDGER_KEYS[0]:-}"
+assert_eq "step9 decline: ledger value skipped" "skipped" "${_WTX_LEDGER_VALS[0]:-}"
+assert_eq "step9 decline: no subprocess" 0 "$step9_calls"
+rm -rf "$tmpdir25"
+
+# -- Case 26: Step 9 confirm success records done and delegates install.sh --hooks
+tmpdir26="$(mktemp -d)"
+export WORKSPACE_ROOT="$tmpdir26"
+WTX_INSTALL_DRY_RUN=0
+_WTX_LEDGER_KEYS=()
+_WTX_LEDGER_VALS=()
+step9_calls=0
+step9_args=""
+tui_confirm() { return 0; }
+wtx_install_write_or_dryrun() {
+    step9_calls=$((step9_calls + 1))
+    step9_args="$*"
+    return 0
+}
+_wtx_install_step9_claude_hooks >/dev/null
+rc=$?
+assert_eq "step9 success: returns 0" 0 "$rc"
+assert_eq "step9 success: ledger key" "hooks" "${_WTX_LEDGER_KEYS[0]:-}"
+assert_eq "step9 success: ledger value done" "done" "${_WTX_LEDGER_VALS[0]:-}"
+assert_eq "step9 success: delegates once" 1 "$step9_calls"
+assert_contains "step9 success: command uses bash install.sh" "bash $REPO_ROOT/install.sh --hooks" "$step9_args"
+rm -rf "$tmpdir26"
+
+# -- Case 27: Step 9 confirm failure records failed and propagates rc
+tmpdir27="$(mktemp -d)"
+export WORKSPACE_ROOT="$tmpdir27"
+WTX_INSTALL_DRY_RUN=0
+_WTX_LEDGER_KEYS=()
+_WTX_LEDGER_VALS=()
+tui_confirm() { return 0; }
+wtx_install_write_or_dryrun() { return 6; }
+_wtx_install_step9_claude_hooks >/dev/null
+rc=$?
+assert_eq "step9 failure: returns subprocess rc" 6 "$rc"
+assert_eq "step9 failure: ledger key" "hooks" "${_WTX_LEDGER_KEYS[0]:-}"
+assert_eq "step9 failure: ledger value failed" "failed" "${_WTX_LEDGER_VALS[0]:-}"
+rm -rf "$tmpdir27"
+
+# -- Case 28: Step 9 dry-run appends --dry-run to delegated command args
+tmpdir28="$(mktemp -d)"
+export WORKSPACE_ROOT="$tmpdir28"
+WTX_INSTALL_DRY_RUN=1
+_WTX_LEDGER_KEYS=()
+_WTX_LEDGER_VALS=()
+step9_args=""
+tui_confirm() { return 0; }
+wtx_install_write_or_dryrun() {
+    step9_args="$*"
+    return 0
+}
+_wtx_install_step9_claude_hooks >/dev/null
+rc=$?
+assert_eq "step9 dry-run: returns 0" 0 "$rc"
+assert_contains "step9 dry-run: delegated args include dry-run" "--dry-run" "$step9_args"
+assert_eq "step9 dry-run: ledger done" "done" "${_WTX_LEDGER_VALS[0]:-}"
+rm -rf "$tmpdir28"
+
+# -- Case 29: _wtx_install_run tracks Step 9 failure but returns it after later placeholders
+_wtx_install_preflight() {
+    _WTX_LEDGER_KEYS=()
+    _WTX_LEDGER_VALS=()
+    WTX_INSTALL_DRY_RUN=0
+    WORKSPACE_ROOT="/tmp/wtx-run-test"
+    export WTX_INSTALL_DRY_RUN WORKSPACE_ROOT
+    return 0
+}
+_wtx_install_step_banner() { return 0; }
+_wtx_install_step2_binary() { return 0; }
+_wtx_install_steps3_7_config() { return 0; }
+_wtx_install_step8_hook() { return 0; }
+wtx_install_write_or_dryrun() { return 0; }
+_wtx_install_step9_claude_hooks() { return 8; }
+_wtx_install_run >/dev/null 2>&1; rc=$?
+assert_eq "run: step9 failure returns tracked rc" 8 "$rc"
+
+# -- Case 30: _wtx_install_run propagates critical failures with ledger evidence
 _wtx_install_preflight() {
     _WTX_LEDGER_KEYS=()
     _WTX_LEDGER_VALS=()
@@ -588,6 +692,115 @@ _wtx_install_run >/dev/null 2>&1; rc=$?
 assert_eq "run: TOML write failure returns rc" 9 "$rc"
 assert_eq "run: TOML write failure ledger key" "config" "${_WTX_LEDGER_KEYS[0]:-}"
 assert_eq "run: TOML write failure ledger value" "failed" "${_WTX_LEDGER_VALS[0]:-}"
+
+# ---------------------------------------------------------------------------
+# Story 1.3 QA gap coverage (Cases 31-34): ledger-count, descriptions,
+# workspace-root hook destination, run success
+# ---------------------------------------------------------------------------
+
+# Restore real wizard functions (_wtx_install_step9_claude_hooks and _wtx_install_run
+# were overridden as stubs in Cases 29–30).
+unset -f _wtx_install_step9_claude_hooks _wtx_install_run
+eval "$wizard_head" 2>/dev/null || true
+tui_style_box() { for l in "$@"; do echo "  $l"; done; }
+
+# -- Case 31: Step 9 — exactly one ledger entry per outcome (AC5)
+# AC5 requires *exactly* one entry appended regardless of outcome.
+tmpdir31="$(mktemp -d)"
+export WTX_ROOT="$REPO_ROOT"
+export WORKSPACE_ROOT="$tmpdir31"
+wtx_install_write_or_dryrun() { return 0; }
+
+WTX_INSTALL_DRY_RUN=0
+_WTX_LEDGER_KEYS=()
+_WTX_LEDGER_VALS=()
+tui_confirm() { return 1; }
+_wtx_install_step9_claude_hooks >/dev/null
+assert_eq "step9 ledger-count: exactly 1 entry on decline" "1" "${#_WTX_LEDGER_KEYS[@]}"
+
+_WTX_LEDGER_KEYS=()
+_WTX_LEDGER_VALS=()
+tui_confirm() { return 0; }
+_wtx_install_step9_claude_hooks >/dev/null
+assert_eq "step9 ledger-count: exactly 1 entry on success" "1" "${#_WTX_LEDGER_KEYS[@]}"
+
+_WTX_LEDGER_KEYS=()
+_WTX_LEDGER_VALS=()
+tui_confirm() { return 0; }
+wtx_install_write_or_dryrun() { return 5; }
+_wtx_install_step9_claude_hooks >/dev/null; true
+assert_eq "step9 ledger-count: exactly 1 entry on failure" "1" "${#_WTX_LEDGER_KEYS[@]}"
+
+rm -rf "$tmpdir31"
+
+# -- Case 32: Step 9 info box contains one-line descriptions for all three hooks (AC1)
+# AC1 requires a description beside each hook filename; only filenames were checked before.
+tmpdir32="$(mktemp -d)"
+export WORKSPACE_ROOT="$tmpdir32"
+WTX_INSTALL_DRY_RUN=0
+_WTX_LEDGER_KEYS=()
+_WTX_LEDGER_VALS=()
+tui_confirm() { return 1; }
+wtx_install_write_or_dryrun() { return 0; }
+step32_out="$(_wtx_install_step9_claude_hooks)"
+assert_contains "step9 desc: create hook one-liner" "runs after 'wtx start' creates a worktree" "$step32_out"
+assert_contains "step9 desc: detect hook one-liner" "runs when Claude detects the active worktree" "$step32_out"
+assert_contains "step9 desc: remove hook one-liner" "runs after 'wtx done' removes a worktree" "$step32_out"
+rm -rf "$tmpdir32"
+
+# -- Case 33: Step 9 installs hooks into WORKSPACE_ROOT even when invoked below it (AC2)
+tmpdir33="$(mktemp -d)"
+mkdir -p "$tmpdir33/ws/nested"
+( cd "$tmpdir33/ws" && git init -q )
+export WTX_ROOT="$REPO_ROOT"
+export WORKSPACE_ROOT="$tmpdir33/ws"
+WTX_INSTALL_DRY_RUN=0
+_WTX_LEDGER_KEYS=()
+_WTX_LEDGER_VALS=()
+tui_confirm() { return 0; }
+unset -f wtx_install_write_or_dryrun
+unset _WTX_INSTALL_LIB_LOADED
+source "$LIB"
+start_pwd="$(pwd)"
+cd "$tmpdir33/ws/nested" || exit 1
+_wtx_install_step9_claude_hooks > "$tmpdir33/step9.out" 2>"$tmpdir33/step9.err"
+rc=$?
+after_pwd="$(pwd)"
+cd "$start_pwd" || exit 1
+assert_eq "step9 cwd: returns 0" 0 "$rc"
+assert_eq "step9 cwd: restores caller directory" "$tmpdir33/ws/nested" "$after_pwd"
+assert_eq "step9 cwd: ledger value done" "done" "${_WTX_LEDGER_VALS[0]:-}"
+for hook_name in worktree-create.sh worktree-detect.sh worktree-remove.sh; do
+    if cmp -s "$REPO_ROOT/hooks/$hook_name" "$tmpdir33/ws/.claude/hooks/$hook_name"; then
+        TOTAL=$((TOTAL+1))
+        printf 'PASS  step9 cwd: %s copied byte-for-byte\n' "$hook_name"
+    else
+        FAILS=$((FAILS+1)); TOTAL=$((TOTAL+1))
+        printf 'FAIL  step9 cwd: %s copied byte-for-byte\n' "$hook_name"
+    fi
+done
+[[ ! -e "$tmpdir33/ws/nested/.claude/hooks/worktree-create.sh" ]]
+assert_ok "step9 cwd: nested directory left unchanged" $?
+rm -rf "$tmpdir33"
+
+# -- Case 34: _wtx_install_run returns 0 when step9 succeeds (tracked _run_rc stays 0)
+# Inverse of Case 29: verified failure propagation; this verifies the success path.
+_wtx_install_preflight() {
+    _WTX_LEDGER_KEYS=()
+    _WTX_LEDGER_VALS=()
+    WTX_INSTALL_DRY_RUN=0
+    WORKSPACE_ROOT="/tmp/wtx-run-test-33"
+    export WTX_INSTALL_DRY_RUN WORKSPACE_ROOT
+    return 0
+}
+_wtx_install_step_banner() { return 0; }
+_wtx_install_step2_binary() { return 0; }
+_wtx_install_steps3_7_config() { return 0; }
+_wtx_install_step8_hook() { return 0; }
+wtx_install_write_or_dryrun() { return 0; }
+_wtx_install_step9_claude_hooks() { return 0; }
+_wtx_install_run >/dev/null 2>&1; rc=$?
+assert_eq "run: step9 success tracked-rc returns 0" 0 "$rc"
 
 echo
 if [[ $FAILS -eq 0 ]]; then

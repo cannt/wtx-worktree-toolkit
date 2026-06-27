@@ -359,9 +359,57 @@ _wtx_install_commit_toml() {
 }
 
 # ---------------------------------------------------------------------------
+# Step 9 — Claude Code hooks setup
+# ---------------------------------------------------------------------------
+_wtx_install_step9_claude_hooks() {
+    tui_style_box \
+        "Claude Code hooks — what will be installed:" \
+        "  worktree-create.sh  — runs after 'wtx start' creates a worktree" \
+        "  worktree-detect.sh  — runs when Claude detects the active worktree" \
+        "  worktree-remove.sh  — runs after 'wtx done' removes a worktree"
+
+    if ! tui_confirm "Install Claude Code hooks?" "yes"; then
+        _WTX_LEDGER_KEYS+=("hooks")
+        _WTX_LEDGER_VALS+=("skipped")
+        return 0
+    fi
+
+    local install_args=("bash" "$WTX_ROOT/install.sh" "--hooks")
+    if [[ "${WTX_INSTALL_DRY_RUN:-0}" = "1" ]]; then
+        install_args+=("--dry-run")
+    fi
+
+    local old_pwd rc=0
+    if ! old_pwd="$(pwd)"; then
+        printf 'wtx install: could not determine current directory\n' >&2
+        rc=1
+    elif ! cd "$WORKSPACE_ROOT"; then
+        printf 'wtx install: cannot cd to workspace root: %s\n' "$WORKSPACE_ROOT" >&2
+        rc=1
+    else
+        wtx_install_write_or_dryrun "would copy: hooks -> $WORKSPACE_ROOT/.claude/hooks/" "${install_args[@]}"
+        rc=$?
+        if ! cd "$old_pwd"; then
+            printf 'wtx install: could not restore directory: %s\n' "$old_pwd" >&2
+            [[ $rc -eq 0 ]] && rc=1
+        fi
+    fi
+
+    _WTX_LEDGER_KEYS+=("hooks")
+    if [[ $rc -eq 0 ]]; then
+        _WTX_LEDGER_VALS+=("done")
+    else
+        _WTX_LEDGER_VALS+=("failed")
+    fi
+    return $rc
+}
+
+# ---------------------------------------------------------------------------
 # Main run — wire step sequence (AC: 10)
 # ---------------------------------------------------------------------------
 _wtx_install_run() {
+    local _run_rc=0
+
     _wtx_install_preflight "$@" || return $?
 
     # Step 0 — idempotency gate (placeholder — Story 1.5 / AD-13)
@@ -391,8 +439,8 @@ _wtx_install_run() {
         return $toml_rc
     fi
 
-    # Step 9 — Claude Code hooks setup (placeholder — Story 1.3)
-    # _wtx_install_step9_claude_hooks
+    # Step 9 — Claude Code hooks setup
+    _wtx_install_step9_claude_hooks || _run_rc=$?
 
     # Step 10a/10b — Extras menu (placeholder — Story 1.4)
     # _wtx_install_step10_extras
@@ -400,7 +448,7 @@ _wtx_install_run() {
     # Step 11 — Completion summary + doctor handoff (placeholder — Story 1.7)
     # _wtx_install_step11_summary
 
-    return 0
+    return $_run_rc
 }
 
 _wtx_install_run "$@"

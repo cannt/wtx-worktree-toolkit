@@ -1,3 +1,36 @@
+# Test Automation Summary — Story 1.3: Claude Code hooks setup (Step 9)
+
+Generated: 2026-06-27
+
+## QA Gap Cases Added (Cases 31-34)
+
+Four gaps were identified against the Story 1.3 ACs and auto-applied to `tests/test-wtx-install.sh`:
+
+| Gap | Added case | AC |
+|-----|-----------|-----|
+| Ledger count never asserted — AC5 says "exactly one entry appended" | Case 31 | AC5 |
+| Hook descriptions not checked — only filenames were asserted | Case 32 | AC1 |
+| Actual hook copy destination not tested when invoked below `WORKSPACE_ROOT` | Case 33 | AC2 |
+| `_wtx_install_run` success path not tested (only failure in Case 29) | Case 34 | Integration |
+
+- [x] Case 31 — exactly 1 ledger entry per outcome (decline / success / failure)
+- [x] Case 32 — one-liner descriptions for all 3 hooks present in info box
+- [x] Case 33 — real `install.sh --hooks` copies all three hooks byte-for-byte into `$WORKSPACE_ROOT/.claude/hooks/` from a nested current directory
+- [x] Case 34 — `_wtx_install_run` with step9 returning 0 keeps `_run_rc=0`, returns 0
+
+## Validation results (all required suites)
+
+| Suite | Result |
+|-------|--------|
+| `bash -n` syntax (bin/lib/scripts/hooks/plugins) | OK |
+| `tests/test-wtx-install.sh` | 118/118 ✅ (was 104; +14 assertions across Cases 31-34) |
+| `tests/test-wtx-config.sh` | 26/26 ✅ |
+| `tests/test-wtx-dispatcher.sh` | 22/22 ✅ |
+| `tests/test-install.sh` | 25/25 ✅ |
+| `tests/test-worktree-registry.sh` | 19/19 ✅ |
+
+---
+
 # Test Automation Summary — Story 1.2
 
 **Feature:** Reference-templating engine — config prompts, plugin discovery & TOML write
