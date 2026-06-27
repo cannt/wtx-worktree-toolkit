@@ -565,10 +565,38 @@ _wtx_install_step0_idempotency() {
     _WTX_INSTALL_MODE="$(tui_choose "How do you want to proceed?" "skip" "overwrite" "merge")"
 }
 
+# ---------------------------------------------------------------------------
+# Step 11 helper — map ledger value to summary status glyph (AC: 1, 6, 7)
+# ---------------------------------------------------------------------------
+_wtx_install_summary_marker() {
+    case "$1" in
+        done|shown)                 printf '[✓]' ;;
+        failed*)                    printf '[!]' ;;
+        "previewed (dry-run)")      printf '[dry-run]' ;;
+        skipped*|"kept (existing)") printf '[-]' ;;
+        *)                          printf '[-]' ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# Step 11 — Completion summary + doctor handoff (AC: 1-4, 6, 7)
+# ---------------------------------------------------------------------------
 _wtx_install_step11_summary() {
     if [[ "${WTX_INSTALL_DRY_RUN:-0}" = "1" ]]; then
         printf '[dry-run] No files were written. Remove --dry-run to apply.\n'
     fi
+
+    local i=0 key val marker
+    local summary_args=("Installation Summary" "")
+    while [[ $i -lt ${#_WTX_LEDGER_KEYS[@]} ]]; do
+        key="${_WTX_LEDGER_KEYS[$i]}"
+        val="${_WTX_LEDGER_VALS[$i]}"
+        marker="$(_wtx_install_summary_marker "$val")"
+        summary_args+=("$marker  $key  $val")
+        i=$((i + 1))
+    done
+    summary_args+=("" "Verify your install:" "  wtx doctor")
+    tui_style_box "${summary_args[@]}"
 }
 
 _wtx_install_run() {
@@ -625,7 +653,7 @@ _wtx_install_run() {
     # Step 10a/10b — Extras menu
     _wtx_install_step10_extras || _run_rc=$?
 
-    # Step 11 — Completion summary + doctor handoff (full table deferred to Story 1.7)
+    # Step 11 — Completion summary + doctor handoff
     _wtx_install_step11_summary || _run_rc=$?
 
     return $_run_rc

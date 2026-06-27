@@ -1976,6 +1976,250 @@ leftovers68="$(find "$tmpdir68/repo" -name '.wtx-install-tmp.*' -print)"
 assert_eq "1.6 e2e dry-run merge: no TOML temp leftovers" "" "$leftovers68"
 rm -rf "$tmpdir68"
 
+# ---------------------------------------------------------------------------
+# Story 1.7 completion summary and doctor handoff (Cases 69-75)
+# ---------------------------------------------------------------------------
+
+# Real functions are already restored from the Story 1.6 restore block above.
+# Re-define the TUI stub so unit tests don't need a real gum binary.
+tui_style_box() { for l in "$@"; do echo "  $l"; done; }
+
+# -- Case 69: Unit — _wtx_install_summary_marker covers all required value types
+assert_eq "1.7 marker: done"                     "[✓]"      "$(_wtx_install_summary_marker "done")"
+assert_eq "1.7 marker: shown"                    "[✓]"      "$(_wtx_install_summary_marker "shown")"
+assert_eq "1.7 marker: skipped"                  "[-]"      "$(_wtx_install_summary_marker "skipped")"
+assert_eq "1.7 marker: skipped (already on PATH)" "[-]"     "$(_wtx_install_summary_marker "skipped (already on PATH)")"
+assert_eq "1.7 marker: kept (existing)"          "[-]"      "$(_wtx_install_summary_marker "kept (existing)")"
+assert_eq "1.7 marker: failed"                   "[!]"      "$(_wtx_install_summary_marker "failed")"
+assert_eq "1.7 marker: failed: detail"           "[!]"      "$(_wtx_install_summary_marker "failed: detail")"
+assert_eq "1.7 marker: previewed (dry-run)"      "[dry-run]" "$(_wtx_install_summary_marker "previewed (dry-run)")"
+assert_eq "1.7 marker: unknown value"            "[-]"      "$(_wtx_install_summary_marker "some-unknown-value")"
+
+# -- Case 70: Unit — summary renders ledger rows in index order, includes wtx doctor
+_WTX_LEDGER_KEYS=("symlink" "config" "hooks")
+_WTX_LEDGER_VALS=("done" "skipped" "failed")
+WTX_INSTALL_DRY_RUN=0
+out70="$(_wtx_install_step11_summary 2>&1)"
+assert_contains "1.7 unit summary: symlink done row"   "[✓]  symlink  done"   "$out70"
+assert_contains "1.7 unit summary: config skipped row" "[-]  config  skipped" "$out70"
+assert_contains "1.7 unit summary: hooks failed row"   "[!]  hooks  failed"   "$out70"
+assert_contains "1.7 unit summary: wtx doctor present" "wtx doctor"           "$out70"
+# Verify ordering: symlink row appears before config row
+symlink_line70="$(printf '%s\n' "$out70" | grep -n 'symlink' | head -1 | cut -d: -f1)"
+config_line70="$(printf '%s\n' "$out70" | grep -n 'config' | head -1 | cut -d: -f1)"
+[[ "${symlink_line70:-0}" -lt "${config_line70:-0}" ]]; assert_ok "1.7 unit summary: index order preserved" $?
+
+# -- Case 71: Unit — dry-run summary has header once, preview rows, wtx doctor
+_WTX_LEDGER_KEYS=("symlink" "config")
+_WTX_LEDGER_VALS=("previewed (dry-run)" "previewed (dry-run)")
+WTX_INSTALL_DRY_RUN=1
+out71="$(_wtx_install_step11_summary 2>&1)"
+header_count71="$(printf '%s\n' "$out71" | grep -F -c '[dry-run] No files were written. Remove --dry-run to apply.' || true)"
+assert_eq "1.7 dry-run: header appears once"       "1"          "$header_count71"
+assert_contains "1.7 dry-run: symlink preview row"  "[dry-run]  symlink  previewed (dry-run)" "$out71"
+assert_contains "1.7 dry-run: config preview row"   "[dry-run]  config  previewed (dry-run)"  "$out71"
+assert_contains "1.7 dry-run: wtx doctor present"   "wtx doctor"                              "$out71"
+
+# -- Case 72: Run-level — optional failure still renders summary and returns the non-zero rc
+tmpdir72="$(mktemp -d)"
+unset -f _wtx_install_run _wtx_install_step11_summary
+eval "$wizard_head" 2>/dev/null || true
+tui_style_box() { for l in "$@"; do echo "  $l"; done; }
+_wtx_install_preflight() {
+    WORKSPACE_ROOT="$tmpdir72"
+    WTX_ROOT="$REPO_ROOT"
+    WTX_INSTALL_DRY_RUN=0
+    _WTX_LEDGER_KEYS=()
+    _WTX_LEDGER_VALS=()
+    export WORKSPACE_ROOT WTX_ROOT WTX_INSTALL_DRY_RUN
+    return 0
+}
+_wtx_install_step0_idempotency() { _WTX_INSTALL_MODE="overwrite"; return 0; }
+_wtx_install_step_banner()       { return 0; }
+_wtx_install_step2_binary()      { return 0; }
+_wtx_install_steps3_7_config()   { return 0; }
+_wtx_install_step8_hook()        { return 0; }
+wtx_install_write_or_dryrun()    { return 0; }
+_wtx_install_step9_claude_hooks() { return 7; }
+_wtx_install_step10_extras()     { return 0; }
+out72_file="$tmpdir72/out"
+_wtx_install_run > "$out72_file" 2>&1
+rc=$?
+assert_eq "1.7 run optional failure: rc preserved" 7 "$rc"
+assert_contains "1.7 run optional failure: summary rendered" "wtx doctor" "$(cat "$out72_file")"
+assert_contains "1.7 run optional failure: config row present" "[✓]  config  done" "$(cat "$out72_file")"
+rm -rf "$tmpdir72"
+
+# Restore real functions for static and E2E checks.
+unset -f _wtx_install_preflight _wtx_install_step0_idempotency _wtx_install_step_banner \
+    _wtx_install_step2_binary _wtx_install_steps3_7_config _wtx_install_step8_hook \
+    _wtx_install_step9_claude_hooks _wtx_install_step10_extras _wtx_install_step11_summary \
+    _wtx_install_run wtx_install_write_or_dryrun
+unset _WTX_INSTALL_LIB_LOADED
+source "$LIB"
+eval "$wizard_head" 2>/dev/null || true
+
+# -- Case 73: Static — no declare -A, mapfile, or readarray in wizard (AC: 6)
+forbidden73="$(grep -n 'declare -A\|mapfile\|readarray' "$WIZARD" | grep -v ':[[:space:]]*#' || true)"
+assert_eq "1.7 static: no assoc-array/mapfile/readarray" "" "$forbidden73"
+
+# -- Case 74: Static — _wtx_install_summary_marker defined and marker used only in step11 (AC: 7)
+marker_defs74="$(grep -c '^_wtx_install_summary_marker()' "$WIZARD" || true)"
+assert_eq "1.7 static: marker function defined once" "1" "$marker_defs74"
+# All references to _wtx_install_summary_marker: 1 definition + 1 call in step11 = 2
+marker_refs74="$(grep -c '_wtx_install_summary_marker' "$WIZARD" || true)"
+assert_eq "1.7 static: marker only referenced in step11 (def+1 call)" "2" "$marker_refs74"
+
+# -- Case 75: E2E — full non-dry-run wizard has summary rows and wtx doctor; bin/wtx doctor exits 0 (AC: 2, 8)
+tmpdir75="$(mktemp -d)"
+mkdir -p "$tmpdir75/home" "$tmpdir75/repo" "$tmpdir75/prefix/bin"
+( cd "$tmpdir75/repo" && git init -q )
+_write_install_gum_shim "$tmpdir75/bin"
+ln -s "$REPO_ROOT/bin/wtx" "$tmpdir75/prefix/bin/wtx"
+out75="$(
+    cd "$tmpdir75/repo" && \
+    HOME="$tmpdir75/home" \
+    PATH="$tmpdir75/bin:$tmpdir75/prefix/bin:/usr/bin:/bin" \
+    WTX_ROOT="$REPO_ROOT" \
+    WORKSPACE_ROOT="$tmpdir75/repo" \
+    WTX_INSTALL_PREFIX="$tmpdir75/prefix" \
+    WTX_GUM_INSTALL_PREFIX="$tmpdir75/prefix" \
+    WTX_GUM_HOOKS=no \
+    WTX_GUM_GRADLE=no \
+    bash "$WIZARD" 2>&1
+)"
+rc=$?
+assert_eq "1.7 e2e: wizard exits 0" 0 "$rc"
+assert_contains "1.7 e2e: summary has config done row"           "[✓]  config  done"                    "$out75"
+assert_contains "1.7 e2e: summary has symlink skipped row"       "[-]  symlink  skipped (already on PATH)" "$out75"
+assert_contains "1.7 e2e: wtx doctor in wizard output"           "wtx doctor"                           "$out75"
+[[ -f "$tmpdir75/repo/wtx.toml" ]]; assert_ok "1.7 e2e: wtx.toml written" $?
+doctor_rc=0
+(
+    WTX_ROOT="$REPO_ROOT" \
+    WORKSPACE_ROOT="$tmpdir75/repo" \
+    PATH="$tmpdir75/prefix/bin:/usr/bin:/bin" \
+    "$REPO_ROOT/bin/wtx" doctor > /dev/null 2>&1
+) || doctor_rc=$?
+assert_ok "1.7 e2e: bin/wtx doctor exits 0 after install" "$doctor_rc"
+rm -rf "$tmpdir75"
+
+# ---------------------------------------------------------------------------
+# QA E2E coverage gaps (qa-generate-e2e-tests) — Cases 76-78
+# Close AC5 (critical early return must NOT render Step 11), AC4 (a real
+# failed ledger row renders [!] at run level with rc preserved), and AC1
+# (no-gum mode prints the same content as plain text via the real tui_style_box).
+# ---------------------------------------------------------------------------
+
+# -- Case 76: Run-level — critical pre-summary failure returns early, Step 11 NOT rendered (AC: 5)
+# 76a: Step 2 (binary) critical failure aborts before the summary.
+tmpdir76="$(mktemp -d)"
+unset -f _wtx_install_run _wtx_install_step11_summary
+eval "$wizard_head" 2>/dev/null || true
+tui_style_box() { for l in "$@"; do echo "  $l"; done; }
+_wtx_install_preflight() {
+    WORKSPACE_ROOT="$tmpdir76"
+    WTX_ROOT="$REPO_ROOT"
+    WTX_INSTALL_DRY_RUN=0
+    _WTX_LEDGER_KEYS=()
+    _WTX_LEDGER_VALS=()
+    export WORKSPACE_ROOT WTX_ROOT WTX_INSTALL_DRY_RUN
+    return 0
+}
+_wtx_install_step0_idempotency() { _WTX_INSTALL_MODE="overwrite"; return 0; }
+_wtx_install_step_banner()       { return 0; }
+_wtx_install_step2_binary()      { return 5; }  # critical failure before summary
+out76a="$(_wtx_install_run 2>&1)"; rc=$?
+assert_eq "1.7 critical early return: step2 rc preserved" 5 "$rc"
+[[ "$out76a" != *"wtx doctor"* ]]; assert_ok "1.7 critical early return: no doctor handoff rendered" $?
+[[ "$out76a" != *"Installation Summary"* ]]; assert_ok "1.7 critical early return: no summary box rendered" $?
+
+# 76b: TOML commit failure aborts before the summary (config row recorded failed, summary skipped).
+unset -f _wtx_install_run _wtx_install_step11_summary
+eval "$wizard_head" 2>/dev/null || true
+tui_style_box() { for l in "$@"; do echo "  $l"; done; }
+_wtx_install_preflight() {
+    WORKSPACE_ROOT="$tmpdir76"
+    WTX_ROOT="$REPO_ROOT"
+    WTX_INSTALL_DRY_RUN=0
+    _WTX_LEDGER_KEYS=()
+    _WTX_LEDGER_VALS=()
+    export WORKSPACE_ROOT WTX_ROOT WTX_INSTALL_DRY_RUN
+    return 0
+}
+_wtx_install_step0_idempotency() { _WTX_INSTALL_MODE="overwrite"; return 0; }
+_wtx_install_step_banner()       { return 0; }
+_wtx_install_step2_binary()      { return 0; }
+_wtx_install_steps3_7_config()   { return 0; }
+_wtx_install_step8_hook()        { return 0; }
+wtx_install_write_or_dryrun()    { return 3; }  # atomic TOML write fails
+out76b="$(_wtx_install_run 2>&1)"; rc=$?
+assert_eq "1.7 toml commit failure: rc preserved" 3 "$rc"
+[[ "$out76b" != *"wtx doctor"* ]]; assert_ok "1.7 toml commit failure: no doctor handoff rendered" $?
+rm -rf "$tmpdir76"
+
+# -- Case 77: Run-level — a real failed ledger entry renders [!] and rc is preserved (AC: 4)
+tmpdir77="$(mktemp -d)"
+unset -f _wtx_install_run _wtx_install_step11_summary
+eval "$wizard_head" 2>/dev/null || true
+tui_style_box() { for l in "$@"; do echo "  $l"; done; }
+_wtx_install_preflight() {
+    WORKSPACE_ROOT="$tmpdir77"
+    WTX_ROOT="$REPO_ROOT"
+    WTX_INSTALL_DRY_RUN=0
+    _WTX_LEDGER_KEYS=()
+    _WTX_LEDGER_VALS=()
+    export WORKSPACE_ROOT WTX_ROOT WTX_INSTALL_DRY_RUN
+    return 0
+}
+_wtx_install_step0_idempotency() { _WTX_INSTALL_MODE="overwrite"; return 0; }
+_wtx_install_step_banner()       { return 0; }
+_wtx_install_step2_binary()      { return 0; }
+_wtx_install_steps3_7_config()   { return 0; }
+_wtx_install_step8_hook()        { return 0; }
+wtx_install_write_or_dryrun()    { return 0; }
+_wtx_install_step9_claude_hooks() {
+    _WTX_LEDGER_KEYS+=("hooks")
+    _WTX_LEDGER_VALS+=("failed")
+    return 7
+}
+_wtx_install_step10_extras()     { return 0; }
+out77="$(_wtx_install_run 2>&1)"; rc=$?
+assert_eq "1.7 failed row run-level: optional failure rc preserved" 7 "$rc"
+assert_contains "1.7 failed row run-level: failed step shows [!]"   "[!]  hooks  failed" "$out77"
+assert_contains "1.7 failed row run-level: config done row present" "[✓]  config  done" "$out77"
+assert_contains "1.7 failed row run-level: doctor handoff after summary" "wtx doctor" "$out77"
+rm -rf "$tmpdir77"
+
+# Restore real wizard functions for the no-gum plain-text check.
+unset -f _wtx_install_preflight _wtx_install_step0_idempotency _wtx_install_step_banner \
+    _wtx_install_step2_binary _wtx_install_steps3_7_config _wtx_install_step8_hook \
+    _wtx_install_step9_claude_hooks _wtx_install_step10_extras _wtx_install_step11_summary \
+    _wtx_install_run wtx_install_write_or_dryrun
+unset _WTX_INSTALL_LIB_LOADED
+source "$LIB"
+eval "$wizard_head" 2>/dev/null || true
+
+# -- Case 78: No-gum mode renders the same summary content as plain text (AC: 1)
+# Exercises the REAL tui_style_box pure-bash fallback (gum forced absent),
+# proving Step 11 content survives without gum styling.
+out78="$(
+    # shellcheck source=../lib/worktree-tui.sh disable=SC1091
+    source "$REPO_ROOT/lib/worktree-tui.sh" 2>/dev/null
+    has_gum() { return 1; }            # force no-gum plain-text path
+    _maybe_show_gum_hint() { :; }      # silence one-time hint
+    _WTX_LEDGER_KEYS=("symlink" "config" "hooks")
+    _WTX_LEDGER_VALS=("done" "skipped" "previewed (dry-run)")
+    WTX_INSTALL_DRY_RUN=0
+    _wtx_install_step11_summary 2>&1
+)"
+assert_contains "1.7 no-gum plain text: symlink done row"     "[✓]  symlink  done"   "$out78"
+assert_contains "1.7 no-gum plain text: config skipped row"   "[-]  config  skipped" "$out78"
+assert_contains "1.7 no-gum plain text: hooks dry-run row"    "[dry-run]  hooks  previewed (dry-run)" "$out78"
+assert_contains "1.7 no-gum plain text: doctor handoff"       "wtx doctor"           "$out78"
+# Confirm the plain-text box border was used (gum was not) — proves the fallback ran.
+assert_contains "1.7 no-gum plain text: pure-bash box border" "│"                    "$out78"
+
 echo
 if [[ $FAILS -eq 0 ]]; then
     printf '%d/%d passed\n' "$TOTAL" "$TOTAL"

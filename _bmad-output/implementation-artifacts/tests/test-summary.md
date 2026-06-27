@@ -1,3 +1,58 @@
+# Test Automation Summary — Story 1.7: Completion summary & doctor handoff (Step 11)
+
+**Feature:** `_wtx_install_step11_summary` + `_wtx_install_summary_marker` in `scripts/worktree-install.sh` — ledger-driven completion summary and `wtx doctor` handoff.
+**Story file:** `_bmad-output/implementation-artifacts/1-7-completion-summary-doctor-handoff-step-11.md`
+**Date:** 2026-06-27
+**Framework:** Repo-native bash assertion harness (`assert_eq` / `assert_contains` / `assert_ok`) — shell-only, no bats/shunit2/CI (project convention).
+
+## Scope
+
+`wtx` is a shell CLI — no HTTP API, no browser UI. "E2E" maps to full/partial wizard
+runs of `scripts/worktree-install.sh` driven through `tui_*` stubs and (for the no-gum
+case) the **real** `lib/worktree-tui.sh`. QA automation only — no production code changed.
+Story 1.7 already shipped Cases 69–75; this run audited those against the 9 ACs and
+auto-applied the remaining branch gaps.
+
+## Gap analysis (Cases 69–75 vs. Story 1.7 ACs)
+
+| Gap | Added coverage | AC |
+|-----|---------------|-----|
+| **Critical pre-summary failure** (Step 2 binary / TOML commit) was never tested — AC5 requires early return with the failure rc and **no** Step 11 render | Case 76a/76b | AC 5 |
+| **Run-level `[!]` failed row** was unproven — Case 72 stubbed Step 9 to `return 7` but never appended a real `failed` ledger entry, so no `[!]  hooks  failed` row was asserted at run level | Case 77 | AC 4 |
+| **No-gum plain-text path** was never exercised — every case stubbed `tui_style_box`; the real pure-bash fallback (gum absent) was untested | Case 78 | AC 1 |
+
+## Generated / extended tests — `tests/test-wtx-install.sh`
+
+- [x] **Case 76 — AC5: critical early return does NOT render Step 11**
+  - 76a: Step 2 binary critical failure → `_wtx_install_run` returns rc 5; no `Installation Summary` box, no `wtx doctor` handoff.
+  - 76b: atomic TOML commit failure → returns rc 3; summary not rendered.
+- [x] **Case 77 — AC4: real `failed` ledger row renders `[!]` at run level** — Step 9 appends `hooks=failed` and returns 7 → summary shows `[!]  hooks  failed`, keeps `[✓]  config  done`, prints `wtx doctor`, and rc 7 is preserved after rendering.
+- [x] **Case 78 — AC1: no-gum mode prints same content as plain text** — real `tui_style_box` with gum forced absent → `[✓]`/`[-]`/`[dry-run]` rows + `wtx doctor` survive inside the pure-bash box border (`│`).
+
+## Coverage
+
+- Story 1.7 ACs with deterministic surface: **AC 1–9 covered**. Pre-existing Cases 69–75 retained (marker mapping unit, index-order unit, dry-run header-once unit, optional-failure run-level rc, bash-3.2/marker static checks, full non-dry-run E2E + `bin/wtx doctor` exits 0).
+- API endpoints: 0/0 (N/A — shell CLI).
+- Gaps discovered and auto-applied: 3 (AC5 none → covered; AC4 partial → run-level `[!]` row covered; AC1 no-gum plain text none → covered).
+
+## Validation results (all required suites)
+
+| Suite | Result |
+|-------|--------|
+| `bash -n` syntax (bin/lib/scripts/hooks/plugins) | OK |
+| `tests/test-wtx-install.sh` | 327/327 ✅ (was 313; +14 assertions across Cases 76–78) |
+| `tests/test-wtx-config.sh` | 26/26 ✅ |
+| `tests/test-wtx-dispatcher.sh` | 22/22 ✅ |
+| `tests/test-install.sh` | 25/25 ✅ |
+| `tests/test-worktree-registry.sh` | 19/19 ✅ |
+
+## Next steps
+
+- No further Story 1.7 branch gaps identified.
+- When a future installer step appends a new ledger value, add a marker-mapping assertion alongside the existing Case 69 table.
+
+---
+
 # Test Automation Summary — Story 1.6: Dry-run mode end-to-end threading
 
 **Feature:** `wtx install --dry-run` previews every wizard mutation without writing files.

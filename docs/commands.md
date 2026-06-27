@@ -128,6 +128,44 @@ wtx status my-repo
 
 ---
 
+## `wtx install`
+
+**Interactive installer wizard — full first-time setup for a workspace.**
+
+```bash
+# Run the staged setup wizard
+wtx install
+
+# Preview every action without touching the filesystem
+wtx install --dry-run
+```
+
+Routed through `bin/wtx` as `_wtx_exec_script "worktree-install.sh"`. Uses `gum` when
+available and degrades to pure-bash `read` prompts. All write operations are funneled
+through a single `wtx_install_write_or_dryrun` chokepoint, so `--dry-run` previews the
+entire run (each action printed with a `[dry-run]` prefix) with zero filesystem changes.
+
+**Flags**:
+- `--dry-run` — preview-only; prompts still appear, but nothing is written
+
+**Staged flow**:
+1. **Step 0 — preflight**: parse `--dry-run` → set `WTX_INSTALL_DRY_RUN`; verify git repo (exit 1 otherwise); detect `gum`
+2. **Idempotency gate** (only if `wtx.toml` already exists): choose `skip` / `overwrite` / `merge` before any file is touched
+3. **Step 1 — welcome banner**: shows `WORKSPACE_ROOT`, `WTX_ROOT`, Ctrl-C abort notice
+4. **Step 2 — binary install**: skips if `wtx` is already on `PATH` for this install; otherwise prompts for prefix (default `~/.local`) and delegates to `install.sh --prefix`
+5. **Steps 3–8 — config**: forge type/org/base URL, project dirs, detection markers, branch defaults, optional Jira key mappings, setup hook (discovered from `plugins/*.sh`)
+6. **Atomic write**: `wtx.toml` written to a temp file then `mv`-ed into place (no `wtx.example.toml` placeholder survives)
+7. **Step 9 — Claude Code hooks**: optional `install.sh --hooks`
+8. **Step 10 — extras**: optional Gradle worktree-cache init (`install.sh --gradle`) and a PATH-export hint (suppressed when the prefix bin dir is already on `PATH`)
+9. **Step 11 — completion summary**: a `[✓]`/`[-]`/`[!]` ledger of everything done/skipped/failed, plus the exact `wtx doctor` verify command
+
+**Related**: `wtx init` writes only `wtx.toml` from a smaller prompt set; `wtx install` is
+the full guided setup (symlink + config + hooks + extras). The low-level
+`./install.sh [--prefix|--hooks|--gradle|--uninstall|--dry-run]` is invoked internally by
+the wizard and can also be run directly.
+
+---
+
 ## `wtx init`
 
 **Generate `wtx.toml` interactively in the current workspace.**

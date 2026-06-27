@@ -41,7 +41,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-06-26
-last_updated: 2026-06-27
+last_updated: 2026-06-27T14:00:00Z
 project: wtx
 project_key: NOKEY
 tracking_system: file-system
@@ -57,8 +57,34 @@ development_status:
   1-4-extras-menu-gradle-init-path-hint-step-10: done
   1-5-idempotency-skip-overwrite-merge: done
   1-6-dry-run-mode-end-to-end-threading: done
-  1-7-completion-summary-doctor-handoff-step-11: backlog
-  epic-1-retrospective: optional
+  1-7-completion-summary-doctor-handoff-step-11: done
+  epic-1-retrospective: done
 
   # Standalone stories (no parent epic)
   s-1-install-and-set-up-graphify: backlog
+
+action_items:
+  - epic: 1
+    action: "Pair return-code with ledger state: every step appending a failed/done ledger entry must return a matching exit status, asserted in tests"
+    owner: "Charlie (Senior Dev)"
+    status: open
+  - epic: 1
+    action: "Add a cwd-pinning review gate for any install.sh/subprocess delegation (cd to WORKSPACE_ROOT or pass explicit dir, then restore)"
+    owner: "Dana (QA Engineer)"
+    status: open
+  - epic: 1
+    action: "Include automation side-artifacts (tests/test-summary.md, orchestration progress files) in the File List by default; reconcile git status against File List pre-commit"
+    owner: "Amelia (Developer)"
+    status: open
+  - epic: 1
+    action: "Triage the 5 carry-forward items in deferred-work.md into explicit keep/fix decisions"
+    owner: "Charlie (Senior Dev)"
+    status: open
+  - epic: 1
+    action: "Resolve pending docs-sync item (CLAUDE.md registry_path) and verify the two storied doc-vs-code discrepancies against current code"
+    owner: "Paige (Tech Writer)"
+    status: open
+  - epic: 1
+    action: "Codify architecture-spine-first (build cross-cutting primitives in story 1) as the default epic-sequencing pattern"
+    owner: "Alice (Product Owner)"
+    status: open

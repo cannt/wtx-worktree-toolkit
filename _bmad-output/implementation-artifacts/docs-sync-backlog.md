@@ -10,8 +10,9 @@
 **Assessment:** likely-doc-bug
 **Suggested resolution:** Either (a) remove the "(or defaults.base_branch from config)" claim from the doc to accurately reflect the hardcoded default, or (b) fix `worktree-start.sh` to actually read `defaults.base_branch` from config — which is the desired behavior per the portability overhaul (PORTABILITY_PROMPT.md). Option (b) is more correct long-term.
 **Found by:** docs-sync-validation (cycle 1)
-**Triage status:** storied
+**Triage status:** resolved-verified
 **Triage outcome:** created story `story-config-driven-base-branch.md` — wire worktree-start.sh + interactive.sh to read defaults.base_branch from config
+**Verification (2026-06-27, epic-1 retro doc-sync):** RESOLVED. `scripts/worktree-start.sh:129` and `lib/worktree-interactive.sh:214,260` now call `wtx_config_get "defaults.base_branch" "develop"`. Code matches the doc claim in `docs/commands.md:42`; no doc change needed.
 
 ---
 
@@ -23,8 +24,9 @@
 **Assessment:** likely-doc-bug
 **Suggested resolution:** Either (a) remove the "config-driven via `worktree.registry_path`" claim from architecture.md (and similarly in CLAUDE.md and project-context.md) to accurately reflect the hardcoded path, or (b) fix `lib/worktree-tui.sh`'s `update_registry()` and all callers to read the path via `wtx_config_get "worktree.registry_path" ".claude/worktree-registry.md"`. Option (b) is the intended behavior per the portability overhaul.
 **Found by:** docs-sync-validation (cycle 1)
-**Triage status:** storied
+**Triage status:** resolved-verified
 **Triage outcome:** created story `story-config-driven-registry-path.md` — wire worktree-tui.sh to read worktree.registry_path from config
+**Verification (2026-06-27, epic-1 retro doc-sync):** RESOLVED. `lib/worktree-tui.sh:395-404` now has `_registry_path()` reading `wtx_config_get "worktree.registry_path" ".claude/worktree-registry.md"`, and all registry helpers consume it. Code matches the doc claim in `docs/architecture.md`; no doc change needed.
 
 ---
 
@@ -49,7 +51,8 @@
 **Assessment:** likely-doc-bug
 **Suggested resolution:** Same as the `docs/architecture.md` entry — either fix the code to read from config or update the doc to remove the config-driven claim. Keeping these docs in sync is important since CLAUDE.md is read by AI agents on every session.
 **Found by:** docs-sync-validation (cycle 1)
-**Triage status:** pending
-**Triage outcome:**
+**Triage status:** resolved-verified
+**Triage outcome:** Verified during epic-1 retro doc-sync.
+**Verification (2026-06-27):** RESOLVED. Same root cause as the `docs/architecture.md` entry above — `lib/worktree-tui.sh` now reads `worktree.registry_path` from config via `_registry_path()`. The CLAUDE.md claim is accurate; no doc change needed.
 
 ---
