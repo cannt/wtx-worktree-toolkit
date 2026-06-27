@@ -488,11 +488,11 @@ unset _WTX_INSTALL_LIB_LOADED
 source "$LIB"
 
 # -- Case 20: Step 3 forge options are exactly github / gitlab / bitbucket (AC 5)
-forge_choose_line="$(grep -n 'tui_choose "Forge type"' "$WIZARD" || true)"
-assert_contains "forge: option github" '"github"' "$forge_choose_line"
-assert_contains "forge: option gitlab" '"gitlab"' "$forge_choose_line"
-assert_contains "forge: option bitbucket" '"bitbucket"' "$forge_choose_line"
-case "$forge_choose_line" in
+forge_step_block="$(sed -n '/# Step 3 — Forge configuration/,/# Step 4 — Project dirs/p' "$WIZARD")"
+assert_contains "forge: option github" '"github"' "$forge_step_block"
+assert_contains "forge: option gitlab" '"gitlab"' "$forge_step_block"
+assert_contains "forge: option bitbucket" '"bitbucket"' "$forge_step_block"
+case "$forge_step_block" in
     *gitea*|*"sourcehut"*|*"azure"*)
         FAILS=$((FAILS+1)); TOTAL=$((TOTAL+1)); printf 'FAIL  forge: no extra forge options\n' ;;
     *)
@@ -1175,6 +1175,509 @@ case "$out45" in
     *) TOTAL=$((TOTAL+1)); printf 'PASS  wizard e2e gradle: already-on-PATH prints no guidance\n' ;;
 esac
 rm -rf "$tmpdir45"
+
+# ---------------------------------------------------------------------------
+# Story 1.5 idempotency gate (Cases 46-53)
+# ---------------------------------------------------------------------------
+
+# Restore real wizard functions after E2E cases.
+unset -f _wtx_install_step0_idempotency _wtx_install_run _wtx_install_steps3_7_config _wtx_install_step8_hook
+eval "$wizard_head" 2>/dev/null || true
+
+# -- Case 46: no wtx.toml defaults to overwrite with no chooser prompt
+tmpdir46="$(mktemp -d)"
+export WORKSPACE_ROOT="$tmpdir46"
+choose_calls46=0
+style_calls46=0
+tui_choose() { choose_calls46=$((choose_calls46 + 1)); echo "skip"; }
+tui_style_box() { style_calls46=$((style_calls46 + 1)); }
+_WTX_INSTALL_MODE=""
+_wtx_install_step0_idempotency >/dev/null
+assert_eq "idempotency no file: mode overwrite" "overwrite" "$_WTX_INSTALL_MODE"
+assert_eq "idempotency no file: no prompt" 0 "$choose_calls46"
+assert_eq "idempotency no file: no style box" 0 "$style_calls46"
+rm -rf "$tmpdir46"
+
+# -- Case 47: existing wtx.toml + skip bypasses Steps 1-8 and records kept config
+tmpdir47="$(mktemp -d)"
+echo '[forge]' > "$tmpdir47/wtx.toml"
+run47_early=0
+run47_hooks=0
+run47_extras=0
+_wtx_install_preflight() {
+    WORKSPACE_ROOT="$tmpdir47"
+    WTX_ROOT="$REPO_ROOT"
+    WTX_INSTALL_DRY_RUN=0
+    _WTX_LEDGER_KEYS=()
+    _WTX_LEDGER_VALS=()
+    export WORKSPACE_ROOT WTX_ROOT WTX_INSTALL_DRY_RUN
+    return 0
+}
+tui_style_box() { :; }
+tui_choose() { echo "skip"; }
+_wtx_install_step_banner() { run47_early=$((run47_early + 1)); return 0; }
+_wtx_install_step2_binary() { run47_early=$((run47_early + 1)); return 0; }
+_wtx_install_steps3_7_config() { run47_early=$((run47_early + 1)); return 0; }
+_wtx_install_step8_hook() { run47_early=$((run47_early + 1)); return 0; }
+_wtx_install_step9_claude_hooks() { run47_hooks=$((run47_hooks + 1)); return 0; }
+_wtx_install_step10_extras() { run47_extras=$((run47_extras + 1)); return 0; }
+_wtx_install_run > "$tmpdir47/out" 2>"$tmpdir47/err"; rc=$?
+assert_eq "idempotency skip: run exits 0" 0 "$rc"
+assert_eq "idempotency skip: no Steps 1-8" 0 "$run47_early"
+assert_eq "idempotency skip: Step 9 called" 1 "$run47_hooks"
+assert_eq "idempotency skip: Step 10 called" 1 "$run47_extras"
+assert_eq "idempotency skip: ledger key" "config" "${_WTX_LEDGER_KEYS[0]:-}"
+assert_eq "idempotency skip: ledger kept existing" "kept (existing)" "${_WTX_LEDGER_VALS[0]:-}"
+assert_eq "idempotency skip: exactly one ledger entry" 1 "${#_WTX_LEDGER_KEYS[@]}"
+assert_eq "idempotency skip: toml content unchanged" "[forge]" "$(cat "$tmpdir47/wtx.toml")"
+rm -rf "$tmpdir47"
+
+# Restore real functions before prompt-level merge/overwrite tests.
+unset -f _wtx_install_step0_idempotency _wtx_install_run _wtx_install_steps3_7_config _wtx_install_step8_hook
+eval "$wizard_head" 2>/dev/null || true
+
+# -- Case 48: overwrite config prompts do not pre-read existing config values
+cfg_get_calls48=0
+cfg_list_calls48=0
+wtx_config_get() { cfg_get_calls48=$((cfg_get_calls48 + 1)); echo "SHOULD_NOT_READ"; }
+wtx_config_get_list() { cfg_list_calls48=$((cfg_list_calls48 + 1)); echo "SHOULD_NOT_READ"; }
+_WTX_INSTALL_MODE="overwrite"
+tui_choose() {
+    case "$1" in
+        "Forge type") echo "github" ;;
+        "Detection markers") echo ".git (any git repo — default)" ;;
+        *) echo "${2:-}" ;;
+    esac
+}
+tui_input() { echo "${2:-}"; }
+tui_confirm() { return 1; }
+_wtx_install_steps3_7_config >/dev/null
+assert_eq "idempotency overwrite: no scalar prefill reads" 0 "$cfg_get_calls48"
+assert_eq "idempotency overwrite: no list prefill reads" 0 "$cfg_list_calls48"
+assert_eq "idempotency overwrite: base branch empty defaults main" "main" "$base_branch"
+assert_eq "idempotency overwrite: prefix empty defaults feature" "feature" "$branch_prefix"
+
+# -- Case 49: existing wtx.toml + overwrite runs normal Steps 1-8 and writes config
+tmpdir49="$(mktemp -d)"
+echo '[forge]' > "$tmpdir49/wtx.toml"
+run49_order=""
+_wtx_install_preflight() {
+    WORKSPACE_ROOT="$tmpdir49"
+    WTX_ROOT="$REPO_ROOT"
+    WTX_INSTALL_DRY_RUN=0
+    _WTX_LEDGER_KEYS=()
+    _WTX_LEDGER_VALS=()
+    export WORKSPACE_ROOT WTX_ROOT WTX_INSTALL_DRY_RUN
+    return 0
+}
+tui_style_box() { :; }
+tui_choose() { echo "overwrite"; }
+_wtx_install_step_banner() { run49_order="${run49_order}banner "; return 0; }
+_wtx_install_step2_binary() { run49_order="${run49_order}step2 "; return 0; }
+_wtx_install_steps3_7_config() { run49_order="${run49_order}config "; return 0; }
+_wtx_install_step8_hook() { run49_order="${run49_order}hook "; return 0; }
+wtx_install_write_or_dryrun() { run49_order="${run49_order}write "; return 0; }
+_wtx_install_step9_claude_hooks() { run49_order="${run49_order}step9 "; return 0; }
+_wtx_install_step10_extras() { run49_order="${run49_order}step10 "; return 0; }
+_wtx_install_run > "$tmpdir49/out" 2>"$tmpdir49/err"; rc=$?
+assert_eq "idempotency overwrite: run exits 0" 0 "$rc"
+assert_eq "idempotency overwrite: normal run order" "banner step2 config hook write step9 step10 " "$run49_order"
+assert_eq "idempotency overwrite: ledger config done" "done" "${_WTX_LEDGER_VALS[0]:-}"
+rm -rf "$tmpdir49"
+
+# Restore real functions and config loader before merge tests.
+unset -f _wtx_install_step0_idempotency _wtx_install_run _wtx_install_steps3_7_config _wtx_install_step8_hook wtx_config_get wtx_config_get_list wtx_install_write_or_dryrun
+unset _WTX_CONFIG_LOADED
+source "$REPO_ROOT/lib/wtx-config.sh" 2>/dev/null || true
+eval "$wizard_head" 2>/dev/null || true
+
+# -- Case 50: merge prompts receive existing values as defaults/selected values
+tmpdir50="$(mktemp -d)"
+cat > "$tmpdir50/wtx.toml" <<'EOF50'
+[forge]
+type = "gitlab"
+org = "team"
+base_url = "https://git.example.internal"
+
+[projects]
+list = ["api", "web"]
+
+[detection]
+markers = ["Cargo.toml"]
+
+[worktree]
+setup_hook = "plugins/android-setup.sh"
+
+[defaults]
+base_branch = "develop"
+branch_prefix = "feat"
+EOF50
+export WORKSPACE_ROOT="$tmpdir50"
+export WTX_ROOT="$REPO_ROOT"
+export WTX_CONFIG="$tmpdir50/wtx.toml"
+unset _WTX_CONFIG_LOADED
+source "$REPO_ROOT/lib/wtx-config.sh" 2>/dev/null || true
+_WTX_INSTALL_MODE="merge"
+choose_log_file50="$tmpdir50/choose.log"
+input_log_file50="$tmpdir50/input.log"
+: > "$choose_log_file50"
+: > "$input_log_file50"
+tui_choose() {
+    local selected="" prompt
+    if [[ "${1:-}" = "--selected" ]]; then
+        selected="$2"; shift 2
+    fi
+    prompt="$1"; shift
+    printf '[%s|%s]' "$prompt" "$selected" >> "$choose_log_file50"
+    if [[ -n "$selected" ]]; then
+        echo "$selected"
+    else
+        echo "${1:-}"
+    fi
+}
+tui_input() {
+    printf '[%s|%s]' "$1" "${2-__unset__}" >> "$input_log_file50"
+    echo "${2:-}"
+}
+tui_confirm() {
+    case "$1" in
+        "Self-hosted instance?") return 0 ;;
+        *) return 1 ;;
+    esac
+}
+_wtx_install_steps3_7_config > "$tmpdir50/out" 2>"$tmpdir50/err"
+choose_log50="$(cat "$choose_log_file50")"
+input_log50="$(cat "$input_log_file50")"
+assert_contains "idempotency merge: forge selected" "[Forge type|gitlab]" "$choose_log50"
+assert_contains "idempotency merge: detection selected" "[Detection markers|Rust]" "$choose_log50"
+assert_contains "idempotency merge: forge org default" "[Forge org / owner slug|team]" "$input_log50"
+assert_contains "idempotency merge: base URL default" "[Base URL|https://git.example.internal]" "$input_log50"
+assert_contains "idempotency merge: projects default" "[Known project dirs (comma-separated, optional)|api,web]" "$input_log50"
+assert_contains "idempotency merge: branch default" "[Default base branch|develop]" "$input_log50"
+assert_contains "idempotency merge: prefix default" "[Default branch prefix|feat]" "$input_log50"
+assert_contains "idempotency merge: Jira note" "Jira mappings are not pre-filled" "$(cat "$tmpdir50/err")"
+rm -rf "$tmpdir50"
+
+# -- Case 51: merge Step 8 pre-selects existing setup_hook plugin
+tmpdir51="$(mktemp -d)"
+cat > "$tmpdir51/wtx.toml" <<'EOF51'
+[worktree]
+setup_hook = "plugins/android-setup.sh"
+EOF51
+export WORKSPACE_ROOT="$tmpdir51"
+export WTX_ROOT="$REPO_ROOT"
+export WTX_CONFIG="$tmpdir51/wtx.toml"
+unset _WTX_CONFIG_LOADED
+source "$REPO_ROOT/lib/wtx-config.sh" 2>/dev/null || true
+_WTX_INSTALL_MODE="merge"
+choose_log_file51="$tmpdir51/choose.log"
+: > "$choose_log_file51"
+tui_choose() {
+    local selected="" prompt
+    if [[ "${1:-}" = "--selected" ]]; then
+        selected="$2"; shift 2
+    fi
+    prompt="$1"; shift
+    printf '[%s|%s]' "$prompt" "$selected" >> "$choose_log_file51"
+    echo "$selected"
+}
+tui_input() { echo "${2:-}"; }
+_wtx_install_step8_hook >/dev/null
+choose_log51="$(cat "$choose_log_file51")"
+assert_contains "idempotency merge: setup hook selected" "Setup hook (runs after worktree create)" "$choose_log51"
+assert_contains "idempotency merge: setup hook plugin label" "android-setup.sh" "$choose_log51"
+assert_eq "idempotency merge: setup_hook preserved" "plugins/android-setup.sh" "$setup_hook"
+rm -rf "$tmpdir51"
+
+# -- Case 52: merge accept-all-defaults preserves installer-emitted config values
+tmpdir52="$(mktemp -d)"
+export WORKSPACE_ROOT="$tmpdir52"
+export WTX_ROOT="$REPO_ROOT"
+forge_type="gitlab"
+forge_org="team"
+forge_base_url=""
+projects_csv="api,web"
+detection_csv="Cargo.toml"
+base_branch="develop"
+branch_prefix="feat"
+setup_hook="plugins/android-setup.sh"
+_WTX_JIRA_REPOS=()
+_WTX_JIRA_KEYS=()
+_wtx_install_emit_toml > "$tmpdir52/wtx.toml"
+export WTX_CONFIG="$tmpdir52/wtx.toml"
+unset _WTX_CONFIG_LOADED
+source "$REPO_ROOT/lib/wtx-config.sh" 2>/dev/null || true
+_WTX_INSTALL_MODE="merge"
+tui_choose() {
+    local selected=""
+    if [[ "${1:-}" = "--selected" ]]; then
+        selected="$2"; shift 2
+    fi
+    [[ -n "$selected" ]] && { echo "$selected"; return 0; }
+    echo "${2:-}"
+}
+tui_input() { echo "${2:-}"; }
+tui_confirm() { return 1; }
+_wtx_install_steps3_7_config >/dev/null 2>"$tmpdir52/steps.err"
+_wtx_install_step8_hook >/dev/null
+_wtx_install_emit_toml > "$tmpdir52/merged.toml"
+unset _WTX_CONFIG_LOADED
+export WTX_CONFIG="$tmpdir52/merged.toml"
+source "$REPO_ROOT/lib/wtx-config.sh" 2>/dev/null || true
+assert_eq "idempotency merge defaults: forge.type" "gitlab" "$(wtx_config_get "forge.type" "")"
+assert_eq "idempotency merge defaults: forge.org" "team" "$(wtx_config_get "forge.org" "")"
+assert_eq "idempotency merge defaults: projects.list" "$(printf 'api\nweb')" "$(wtx_config_get_list "projects.list")"
+assert_eq "idempotency merge defaults: detection.markers" "Cargo.toml" "$(wtx_config_get_list "detection.markers")"
+assert_eq "idempotency merge defaults: base_branch" "develop" "$(wtx_config_get "defaults.base_branch" "")"
+assert_eq "idempotency merge defaults: branch_prefix" "feat" "$(wtx_config_get "defaults.branch_prefix" "")"
+assert_eq "idempotency merge defaults: setup_hook" "plugins/android-setup.sh" "$(wtx_config_get "worktree.setup_hook" "")"
+rm -rf "$tmpdir52"
+unset WTX_CONFIG
+
+# -- Case 53: real second run choosing skip leaves wtx.toml byte-for-byte identical
+tmpdir53="$(mktemp -d)"
+mkdir -p "$tmpdir53/home" "$tmpdir53/repo" "$tmpdir53/prefix/bin"
+( cd "$tmpdir53/repo" && git init -q )
+_write_install_gum_shim "$tmpdir53/bin"
+ln -s "$REPO_ROOT/bin/wtx" "$tmpdir53/prefix/bin/wtx"
+(
+    cd "$tmpdir53/repo" && \
+    HOME="$tmpdir53/home" \
+    PATH="$tmpdir53/bin:$tmpdir53/prefix/bin:/usr/bin:/bin" \
+    WTX_ROOT="$REPO_ROOT" \
+    WORKSPACE_ROOT="$tmpdir53/repo" \
+    WTX_INSTALL_PREFIX="$tmpdir53/prefix" \
+    WTX_GUM_HOOKS=no \
+    WTX_GUM_GRADLE=no \
+    WTX_GUM_PATH_HINT=no \
+    bash "$WIZARD" >/dev/null 2>"$tmpdir53/first.err"
+)
+rc=$?
+assert_eq "idempotency skip e2e: first run exits 0" 0 "$rc"
+cp "$tmpdir53/repo/wtx.toml" "$tmpdir53/first.toml"
+(
+    cd "$tmpdir53/repo" && \
+    HOME="$tmpdir53/home" \
+    PATH="$tmpdir53/bin:$tmpdir53/prefix/bin:/usr/bin:/bin" \
+    WTX_ROOT="$REPO_ROOT" \
+    WORKSPACE_ROOT="$tmpdir53/repo" \
+    WTX_INSTALL_PREFIX="$tmpdir53/prefix" \
+    WTX_GUM_HOOKS=no \
+    WTX_GUM_GRADLE=no \
+    WTX_GUM_PATH_HINT=no \
+    bash "$WIZARD" >/dev/null 2>"$tmpdir53/second.err"
+)
+rc=$?
+assert_eq "idempotency skip e2e: second run exits 0" 0 "$rc"
+cmp -s "$tmpdir53/first.toml" "$tmpdir53/repo/wtx.toml"
+assert_ok "idempotency skip e2e: wtx.toml unchanged" $?
+rm -rf "$tmpdir53"
+
+# ---------------------------------------------------------------------------
+# Story 1.5 QA gap coverage (Cases 54-59): gate option set (AC 1), run-level
+# merge re-source wiring (AC 4), and the merge pre-fill branches not exercised
+# by Cases 46-53 — detection "Custom…", Step 8 custom path, Step 8 "None".
+# ---------------------------------------------------------------------------
+
+# Restore real wizard functions after the E2E subshell cases.
+unset -f _wtx_install_step0_idempotency _wtx_install_run _wtx_install_steps3_7_config _wtx_install_step8_hook
+eval "$wizard_head" 2>/dev/null || true
+
+# -- Case 54: gate with existing wtx.toml shows box + offers exactly skip/overwrite/merge (AC 1)
+tmpdir54="$(mktemp -d)"
+printf '[forge]\ntype = "github"\n' > "$tmpdir54/wtx.toml"
+orig_sum54="$(cksum < "$tmpdir54/wtx.toml")"
+export WORKSPACE_ROOT="$tmpdir54"
+style_calls54=0
+# tui_choose runs inside $(...) in the gate, so capture its args via a file.
+choose_log_file54="$tmpdir54/choose.log"
+: > "$choose_log_file54"
+tui_style_box() { style_calls54=$((style_calls54 + 1)); }
+tui_choose() {
+    shift  # drop the prompt/header, leaving only the option list
+    printf '%s' "$*" >> "$choose_log_file54"
+    echo "merge"
+}
+_WTX_INSTALL_MODE=""
+_wtx_install_step0_idempotency >/dev/null
+assert_eq "idempotency gate: style box shown once" 1 "$style_calls54"
+assert_eq "idempotency gate: chooser invoked once" 1 "$(grep -c . "$choose_log_file54")"
+assert_eq "idempotency gate: offers exactly skip/overwrite/merge" "skip overwrite merge" "$(cat "$choose_log_file54")"
+assert_eq "idempotency gate: assigns chosen mode" "merge" "$_WTX_INSTALL_MODE"
+assert_eq "idempotency gate: file untouched before choice" "$orig_sum54" "$(cksum < "$tmpdir54/wtx.toml")"
+rm -rf "$tmpdir54"
+unset WORKSPACE_ROOT
+
+# Restore real functions + config loader before the run-level merge test.
+unset -f _wtx_install_step0_idempotency _wtx_install_run _wtx_install_steps3_7_config _wtx_install_step8_hook wtx_config_get wtx_config_get_list
+unset _WTX_CONFIG_LOADED
+source "$REPO_ROOT/lib/wtx-config.sh" 2>/dev/null || true
+eval "$wizard_head" 2>/dev/null || true
+
+# -- Case 55: merge mode re-sources the config loader against the workspace wtx.toml (AC 4)
+tmpdir55="$(mktemp -d)"
+cat > "$tmpdir55/wtx.toml" <<'EOF55'
+[forge]
+type = "gitlab"
+org = "merge-sentinel-org"
+EOF55
+unset WTX_CONFIG
+_wtx_install_preflight() {
+    WORKSPACE_ROOT="$tmpdir55"
+    WTX_ROOT="$REPO_ROOT"
+    WTX_INSTALL_DRY_RUN=0
+    _WTX_LEDGER_KEYS=()
+    _WTX_LEDGER_VALS=()
+    export WORKSPACE_ROOT WTX_ROOT WTX_INSTALL_DRY_RUN
+    return 0
+}
+tui_style_box() { :; }
+tui_choose() { echo "merge"; }
+_wtx_install_step_banner() { return 0; }
+_wtx_install_step2_binary() { return 0; }
+_wtx_install_steps3_7_config() { return 0; }
+_wtx_install_step8_hook() { return 0; }
+wtx_install_write_or_dryrun() { return 0; }
+_wtx_install_step9_claude_hooks() { return 0; }
+_wtx_install_step10_extras() { return 0; }
+_WTX_CONFIG_LOADED=stale  # the merge block must reset this before re-sourcing
+_wtx_install_run > "$tmpdir55/out" 2>"$tmpdir55/err"; rc=$?
+assert_eq "idempotency merge run: exits 0" 0 "$rc"
+assert_eq "idempotency merge run: WTX_CONFIG points at workspace toml" "$tmpdir55/wtx.toml" "$WTX_CONFIG"
+assert_eq "idempotency merge run: loader guard reset then re-set" "1" "${_WTX_CONFIG_LOADED:-unset}"
+assert_eq "idempotency merge run: re-sourced config is readable" "merge-sentinel-org" "$(wtx_config_get "forge.org" "")"
+rm -rf "$tmpdir55"
+unset WTX_CONFIG
+
+# Restore real functions before the prompt-level merge branch tests.
+unset -f _wtx_install_step0_idempotency _wtx_install_run _wtx_install_steps3_7_config _wtx_install_step8_hook _wtx_install_preflight
+eval "$wizard_head" 2>/dev/null || true
+
+# -- Case 56: merge detection markers with no preset match pre-selects Custom… and pre-fills the CSV (AC 4)
+tmpdir56="$(mktemp -d)"
+cat > "$tmpdir56/wtx.toml" <<'EOF56'
+[detection]
+markers = ["Makefile", "flake.nix"]
+EOF56
+export WORKSPACE_ROOT="$tmpdir56"
+export WTX_ROOT="$REPO_ROOT"
+export WTX_CONFIG="$tmpdir56/wtx.toml"
+unset _WTX_CONFIG_LOADED
+source "$REPO_ROOT/lib/wtx-config.sh" 2>/dev/null || true
+_WTX_INSTALL_MODE="merge"
+# Captures go to files: tui_* run inside $(...) subshells, so var writes won't persist.
+marker_sel_file56="$tmpdir56/marker.sel"
+custom_input_file56="$tmpdir56/custom.in"
+: > "$marker_sel_file56"
+: > "$custom_input_file56"
+tui_choose() {
+    local selected=""
+    if [[ "${1:-}" = "--selected" ]]; then selected="$2"; shift 2; fi
+    local prompt="$1"; shift
+    case "$prompt" in
+        "Detection markers") printf '%s' "$selected" > "$marker_sel_file56"; echo "Custom…" ;;
+        *) if [[ -n "$selected" ]]; then echo "$selected"; else echo "${1:-}"; fi ;;
+    esac
+}
+tui_input() {
+    [[ "$1" = "Detection markers (comma-separated)" ]] && printf '%s' "${2-__unset__}" > "$custom_input_file56"
+    echo "${2:-}"
+}
+tui_confirm() { return 1; }
+_wtx_install_steps3_7_config >/dev/null 2>&1
+assert_eq "idempotency merge custom markers: pre-selects Custom…" "Custom…" "$(cat "$marker_sel_file56")"
+assert_eq "idempotency merge custom markers: custom input pre-filled" "Makefile,flake.nix" "$(cat "$custom_input_file56")"
+assert_eq "idempotency merge custom markers: detection_csv preserved" "Makefile,flake.nix" "$detection_csv"
+rm -rf "$tmpdir56"
+unset WTX_CONFIG WORKSPACE_ROOT
+
+# -- Case 57: merge Step 8 with a non-plugin setup_hook pre-selects Custom path… and pre-fills it (AC 4)
+tmpdir57="$(mktemp -d)"
+cat > "$tmpdir57/wtx.toml" <<'EOF57'
+[worktree]
+setup_hook = "scripts/my-custom-hook.sh"
+EOF57
+export WORKSPACE_ROOT="$tmpdir57"
+export WTX_ROOT="$REPO_ROOT"
+export WTX_CONFIG="$tmpdir57/wtx.toml"
+unset _WTX_CONFIG_LOADED
+source "$REPO_ROOT/lib/wtx-config.sh" 2>/dev/null || true
+_WTX_INSTALL_MODE="merge"
+hook_sel_file57="$tmpdir57/hook.sel"
+custom_hook_file57="$tmpdir57/hook.in"
+: > "$hook_sel_file57"
+: > "$custom_hook_file57"
+tui_choose() {
+    local selected=""
+    if [[ "${1:-}" = "--selected" ]]; then selected="$2"; shift 2; fi
+    printf '%s' "$selected" > "$hook_sel_file57"
+    echo "$selected"
+}
+tui_input() {
+    [[ "$1" = "Relative path to setup hook script" ]] && printf '%s' "${2-__unset__}" > "$custom_hook_file57"
+    echo "${2:-}"
+}
+_wtx_install_step8_hook >/dev/null
+assert_eq "idempotency merge custom hook: pre-selects Custom path…" "Custom path…" "$(cat "$hook_sel_file57")"
+assert_eq "idempotency merge custom hook: input pre-filled" "scripts/my-custom-hook.sh" "$(cat "$custom_hook_file57")"
+assert_eq "idempotency merge custom hook: setup_hook preserved" "scripts/my-custom-hook.sh" "$setup_hook"
+rm -rf "$tmpdir57"
+unset WTX_CONFIG WORKSPACE_ROOT
+
+# -- Case 58: merge Step 8 with no setup_hook pre-selects None and clears the hook (AC 4)
+tmpdir58="$(mktemp -d)"
+printf '[forge]\ntype = "github"\n' > "$tmpdir58/wtx.toml"
+export WORKSPACE_ROOT="$tmpdir58"
+export WTX_ROOT="$REPO_ROOT"
+export WTX_CONFIG="$tmpdir58/wtx.toml"
+unset _WTX_CONFIG_LOADED
+source "$REPO_ROOT/lib/wtx-config.sh" 2>/dev/null || true
+_WTX_INSTALL_MODE="merge"
+hook_sel_file58="$tmpdir58/hook.sel"
+: > "$hook_sel_file58"
+tui_choose() {
+    local selected=""
+    if [[ "${1:-}" = "--selected" ]]; then selected="$2"; shift 2; fi
+    printf '%s' "$selected" > "$hook_sel_file58"
+    echo "$selected"
+}
+tui_input() { echo "${2:-}"; }
+_wtx_install_step8_hook >/dev/null
+assert_eq "idempotency merge no hook: pre-selects None" "None" "$(cat "$hook_sel_file58")"
+assert_eq "idempotency merge no hook: setup_hook empty" "" "$setup_hook"
+rm -rf "$tmpdir58"
+unset WTX_CONFIG WORKSPACE_ROOT
+
+# -- Case 59: real preflight creates no TOML temp file before idempotency choice (AC 1)
+unset -f _wtx_install_step0_idempotency _wtx_install_run _wtx_install_steps3_7_config _wtx_install_step8_hook _wtx_install_preflight _wtx_install_prepare_toml_tmp
+eval "$wizard_head" 2>/dev/null || true
+tmpdir59="$(mktemp -d)"
+mkdir -p "$tmpdir59/repo"
+( cd "$tmpdir59/repo" && git init -q )
+printf '[forge]\ntype = "github"\n' > "$tmpdir59/repo/wtx.toml"
+pre_choice_file59="$tmpdir59/pre-choice-temps"
+: > "$pre_choice_file59"
+_wtx_install_step0_idempotency() {
+    find "$WORKSPACE_ROOT" -name '.wtx-install-tmp.*' -print > "$pre_choice_file59"
+    _WTX_INSTALL_MODE="skip"
+    return 0
+}
+_wtx_install_step9_claude_hooks() { return 0; }
+_wtx_install_step10_extras() { return 0; }
+(
+    cd "$tmpdir59/repo" && \
+    PATH="/usr/bin:/bin" \
+    WTX_ROOT="$REPO_ROOT" \
+    WORKSPACE_ROOT="$tmpdir59/repo" \
+    _wtx_install_run > "$tmpdir59/out" 2>"$tmpdir59/err"
+)
+rc=$?
+assert_eq "idempotency gate pre-choice temp: run exits 0" 0 "$rc"
+assert_eq "idempotency gate pre-choice temp: no temp before choice" "" "$(cat "$pre_choice_file59")"
+leftovers59="$(find "$tmpdir59/repo" -name '.wtx-install-tmp.*' -print)"
+assert_eq "idempotency gate pre-choice temp: no leftovers" "" "$leftovers59"
+rm -rf "$tmpdir59"
+unset WORKSPACE_ROOT WTX_ROOT
 
 echo
 if [[ $FAILS -eq 0 ]]; then

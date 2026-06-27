@@ -1,3 +1,69 @@
+# Test Automation Summary — Story 1.5: Idempotency — skip / overwrite / merge
+
+**Feature:** Idempotency gate for `wtx install` when `wtx.toml` already exists.
+**Story file:** `_bmad-output/implementation-artifacts/1-5-idempotency-skip-overwrite-merge.md`
+**Date:** 2026-06-27
+**Framework:** Repo-native bash assertion harness (`assert_eq` / `assert_contains` / `assert_ok`) — shell-only, no bats/shunit2/CI (project convention).
+
+## Scope
+
+`wtx` is a CLI/shell toolkit — no HTTP API, no GUI, so "API/E2E" maps to **wizard
+integration tests** that drive `scripts/worktree-install.sh` through `tui_*` stubs and
+round-trip generated `wtx.toml` through the real config loader. Story 1.5 already shipped
+Cases 46–53; this run audited those against the 7 ACs and filled the remaining branch gaps.
+
+## Gap analysis (Cases 46–53 vs. Story 1.5 ACs)
+
+Eight branches/properties were under-covered and auto-applied to `tests/test-wtx-install.sh` as additions to Case 47 and new Cases 54–59:
+
+| Gap | Added coverage | AC |
+|-----|---------------|-----|
+| Skip path: ledger count never verified — AC2 requires **exactly one** entry | 2 assertions in Case 47 | AC 2 |
+| Skip path: **TOML byte-for-byte unchanged** at unit level (only E2E Case 53 covered it) | 2 assertions in Case 47 | AC 2 |
+| Gate with an **existing** `wtx.toml` — style box + chooser offering *exactly* `skip`/`overwrite`/`merge`, mode assigned, file untouched before choice (Case 46 only covered the no-file path) | Case 54 | AC 1 |
+| Run-level **merge wiring** in `_wtx_install_run` (unset `_WTX_CONFIG_LOADED` → set `WTX_CONFIG` → re-source loader); Case 50 tested `steps3_7` in isolation with config pre-loaded by hand | Case 55 | AC 4 |
+| Detection-markers **`Custom…` pre-fill** when the existing value matches no preset (Case 50 only covered the `Cargo.toml`→Rust preset) | Case 56 | AC 4 |
+| Step 8 **non-plugin `setup_hook`** → preselect `Custom path…` + pre-fill input (Case 51 only covered a `plugins/` path) | Case 57 | AC 4 |
+| Step 8 **empty `setup_hook`** → preselect `None`, clears hook | Case 58 | AC 4 |
+| Full run still created `.wtx-install-tmp.*` during preflight before the idempotency choice; AC1 requires no files touched before the choice | Case 59 plus source fix | AC 1 |
+
+> Note on harness pattern: `tui_*` prompts are invoked via `$(...)` command substitution,
+> so stub side-effects must be captured to **files**, not shell variables (the Story 1.4
+> file-redirection lesson). Cases 54–59 follow this pattern where needed.
+
+## Generated / extended tests — `tests/test-wtx-install.sh`
+
+- [x] Case 54 — gate (existing TOML): `tui_style_box` shown once; `tui_choose` invoked once offering exactly `skip overwrite merge`; `_WTX_INSTALL_MODE` assigned; `wtx.toml` `cksum` unchanged before the choice (AC 1)
+- [x] Case 55 — merge run: `_wtx_install_run` resets the stale loader guard, points `WTX_CONFIG` at `$WORKSPACE_ROOT/wtx.toml`, re-sources `lib/wtx-config.sh`, and the re-sourced config is readable (sentinel `forge.org`) (AC 4)
+- [x] Case 56 — merge detection markers (`["Makefile","flake.nix"]`): `tui_choose` pre-selects `Custom…`, custom `tui_input` pre-filled with the CSV, `detection_csv` preserved (AC 4)
+- [x] Case 57 — merge Step 8 (`scripts/my-custom-hook.sh`): pre-selects `Custom path…`, path `tui_input` pre-filled, `setup_hook` preserved (AC 4)
+- [x] Case 58 — merge Step 8 (no `setup_hook`): pre-selects `None`, `setup_hook` left empty (AC 4)
+- [x] Case 59 — real preflight + skip gate: no `.wtx-install-tmp.*` exists before the idempotency choice, and no temp file is left behind (AC 1)
+
+## Coverage
+
+- Story 1.5 ACs with deterministic surface: **AC 1, 2, 3, 4, 5, 6 covered**; AC 7 is the `bash -n` syntax gate (green).
+- Pre-existing Cases 46–53 retained (no-file→overwrite, skip ledger/bypass, overwrite no-prefill + run order, merge prompt defaults, merge plugin preselect, merge round-trip equivalence, two-run skip byte-identical).
+- Interactive end-to-end TUI driving: **deferred** (no harness — same documented deferral as prior stories).
+
+## Validation results (all required suites)
+
+| Suite | Result |
+|-------|--------|
+| `bash -n` syntax (bin/lib/scripts/hooks/plugins) | OK |
+| `tests/test-wtx-install.sh` | 224/224 ✅ (was 202; +2 in Case 47 + 20 across Cases 54–59) |
+| `tests/test-wtx-config.sh` | 26/26 ✅ |
+| `tests/test-wtx-dispatcher.sh` | 22/22 ✅ |
+| `tests/test-install.sh` | 25/25 ✅ |
+| `tests/test-worktree-registry.sh` | 19/19 ✅ |
+
+## Next steps
+
+- No further Story 1.5 branch gaps identified.
+- When the interactive TUI gains a test harness, layer end-to-end prompt-driving over the gate.
+
+---
+
 # Test Automation Summary
 
 ## Generated Tests

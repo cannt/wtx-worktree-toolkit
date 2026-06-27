@@ -49,7 +49,12 @@ _wtx_install_source_libs() {
     source "$WTX_ROOT/lib/worktree-tui.sh" 2>/dev/null || {
         tui_confirm() { local r; read -r -p "$1 [y/N] " r < /dev/tty; [[ "$r" =~ ^[Yy]$ ]]; }
         tui_input() { local v; read -r -p "$1 [${2:-}]: " v < /dev/tty; echo "${v:-$2}"; }
-        tui_choose() { local p="$1"; shift; PS3="$p "; select o in "$@"; do echo "$o"; break; done < /dev/tty; }
+        tui_choose() {
+            if [[ "${1:-}" = "--selected" ]]; then
+                shift 2
+            fi
+            local p="$1"; shift; PS3="$p "; select o in "$@"; do echo "$o"; break; done < /dev/tty
+        }
         tui_filter() { tui_choose "$@"; }
         tui_spin() { local m="$1"; shift; echo "$m" >&2; "$@"; }
         tui_style_box() { for l in "$@"; do echo "  $l"; done; }
@@ -102,8 +107,8 @@ _wtx_install_preflight() {
     _wtx_install_resolve_workspace_root || return $?
     _wtx_install_source_libs || return $?
 
-    _WTX_INSTALL_TMP="$(mktemp "$WORKSPACE_ROOT/.wtx-install-tmp.XXXXXX")" || return 1
-    trap 'rm -f "$_WTX_INSTALL_TMP"' EXIT
+    _WTX_INSTALL_TMP=""
+    trap '[[ -z "${_WTX_INSTALL_TMP:-}" ]] || rm -f "$_WTX_INSTALL_TMP"' EXIT
 
     _WTX_LEDGER_KEYS=()
     _WTX_LEDGER_VALS=()
@@ -175,25 +180,62 @@ _wtx_install_step2_binary() {
 # Steps 3–7 — Config prompts (AC: 4, 5, 9)
 # ---------------------------------------------------------------------------
 _wtx_install_steps3_7_config() {
+    local _pf_forge_type="" _pf_forge_org="" _pf_forge_base_url=""
+    local _pf_projects="" _pf_detection="" _pf_marker_preset=""
+    local _pf_base_branch="main" _pf_branch_prefix="feature"
+    if [[ "${_WTX_INSTALL_MODE:-}" = "merge" ]]; then
+        _pf_forge_type="$(wtx_config_get "forge.type" "")"
+        _pf_forge_org="$(wtx_config_get "forge.org" "")"
+        _pf_forge_base_url="$(wtx_config_get "forge.base_url" "")"
+        _pf_projects="$(wtx_config_get_list "projects.list" | tr '\n' ',' | sed 's/,$//')"
+        _pf_detection="$(wtx_config_get_list "detection.markers" | tr '\n' ',' | sed 's/,$//')"
+        _pf_base_branch="$(wtx_config_get "defaults.base_branch" "main")"
+        _pf_branch_prefix="$(wtx_config_get "defaults.branch_prefix" "feature")"
+        case "$_pf_detection" in
+            "") _pf_marker_preset=".git (any git repo — default)" ;;
+            "settings.gradle,settings.gradle.kts") _pf_marker_preset="Gradle / Android" ;;
+            "Cargo.toml") _pf_marker_preset="Rust" ;;
+            "package.json") _pf_marker_preset="Node.js" ;;
+            *) _pf_marker_preset="Custom…" ;;
+        esac
+    fi
+
     # Step 3 — Forge configuration
-    forge_type="$(tui_choose "Forge type" "github" "gitlab" "bitbucket")"
-    forge_org="$(tui_input "Forge org / owner slug")"
+    local _forge_sel_args=()
+    [[ -n "$_pf_forge_type" ]] && _forge_sel_args=("--selected" "$_pf_forge_type")
+    if [[ ${#_forge_sel_args[@]} -gt 0 ]]; then
+        forge_type="$(tui_choose "${_forge_sel_args[@]}" "Forge type" "github" "gitlab" "bitbucket")"
+    else
+        forge_type="$(tui_choose "Forge type" "github" "gitlab" "bitbucket")"
+    fi
+    forge_org="$(tui_input "Forge org / owner slug" "$_pf_forge_org")"
     forge_base_url=""
-    if tui_confirm "Self-hosted instance?"; then
-        forge_base_url="$(tui_input "Base URL")"
+    if tui_confirm "Self-hosted instance?" "${_pf_forge_base_url:+yes}"; then
+        forge_base_url="$(tui_input "Base URL" "$_pf_forge_base_url")"
     fi
 
     # Step 4 — Project dirs
-    projects_csv="$(tui_input "Known project dirs (comma-separated, optional)")"
+    projects_csv="$(tui_input "Known project dirs (comma-separated, optional)" "$_pf_projects")"
 
     # Step 5 — Detection markers
     local marker_choice
-    marker_choice="$(tui_choose "Detection markers" \
-        ".git (any git repo — default)" \
-        "Gradle / Android" \
-        "Rust" \
-        "Node.js" \
-        "Custom…")"
+    local _marker_sel_args=()
+    [[ -n "$_pf_marker_preset" ]] && _marker_sel_args=("--selected" "$_pf_marker_preset")
+    if [[ ${#_marker_sel_args[@]} -gt 0 ]]; then
+        marker_choice="$(tui_choose "${_marker_sel_args[@]}" "Detection markers" \
+            ".git (any git repo — default)" \
+            "Gradle / Android" \
+            "Rust" \
+            "Node.js" \
+            "Custom…")"
+    else
+        marker_choice="$(tui_choose "Detection markers" \
+            ".git (any git repo — default)" \
+            "Gradle / Android" \
+            "Rust" \
+            "Node.js" \
+            "Custom…")"
+    fi
     case "$marker_choice" in
         ".git (any git repo — default)")
             detection_csv=""
@@ -208,7 +250,7 @@ _wtx_install_steps3_7_config() {
             detection_csv="package.json"
             ;;
         "Custom…")
-            detection_csv="$(tui_input "Detection markers (comma-separated)")"
+            detection_csv="$(tui_input "Detection markers (comma-separated)" "$_pf_detection")"
             ;;
         *)
             detection_csv=""
@@ -216,12 +258,15 @@ _wtx_install_steps3_7_config() {
     esac
 
     # Step 6 — Branch defaults
-    base_branch="$(tui_input "Default base branch" "main")"
-    branch_prefix="$(tui_input "Default branch prefix" "feature")"
+    base_branch="$(tui_input "Default base branch" "$_pf_base_branch")"
+    branch_prefix="$(tui_input "Default branch prefix" "$_pf_branch_prefix")"
 
     # Step 7 — Jira project key mapping (parallel indexed arrays, bash 3.2)
     _WTX_JIRA_REPOS=()
     _WTX_JIRA_KEYS=()
+    if [[ "${_WTX_INSTALL_MODE:-}" = "merge" ]]; then
+        printf 'note: Jira mappings are not pre-filled — re-enter them or skip.\n' >&2
+    fi
     while true; do
         local jira_repo
         jira_repo="$(tui_input "Repo name for Jira mapping (blank to skip)")"
@@ -239,6 +284,10 @@ _wtx_install_steps3_7_config() {
 # ---------------------------------------------------------------------------
 _wtx_install_step8_hook() {
     setup_hook=""
+    local _pf_setup_hook=""
+    if [[ "${_WTX_INSTALL_MODE:-}" = "merge" ]]; then
+        _pf_setup_hook="$(wtx_config_get "worktree.setup_hook" "")"
+    fi
 
     # Discover plugins into parallel arrays (bash 3.2, no declare -A, no bare read)
     local _plugin_files=()
@@ -276,15 +325,39 @@ _wtx_install_step8_hook() {
         i=$((i + 1))
     done
 
+    local _selected_hook=""
+    if [[ "${_WTX_INSTALL_MODE:-}" = "merge" ]]; then
+        if [[ -z "$_pf_setup_hook" ]]; then
+            _selected_hook="None"
+        elif [[ "$_pf_setup_hook" = plugins/* ]]; then
+            local _pf_plugin="${_pf_setup_hook#plugins/}"
+            local _hi=0
+            while [[ $_hi -lt ${#_plugin_files[@]} ]]; do
+                if [[ "${_plugin_files[$_hi]}" = "$_pf_plugin" ]]; then
+                    _selected_hook="${_plugin_files[$_hi]} — ${_plugin_descs[$_hi]}"
+                    break
+                fi
+                _hi=$((_hi + 1))
+            done
+        fi
+        [[ -z "$_selected_hook" ]] && _selected_hook="Custom path…"
+    fi
+
     local chosen
-    chosen="$(tui_choose "Setup hook (runs after worktree create)" "${display_items[@]}")"
+    local _hook_sel_args=()
+    [[ -n "$_selected_hook" ]] && _hook_sel_args=("--selected" "$_selected_hook")
+    if [[ ${#_hook_sel_args[@]} -gt 0 ]]; then
+        chosen="$(tui_choose "${_hook_sel_args[@]}" "Setup hook (runs after worktree create)" "${display_items[@]}")"
+    else
+        chosen="$(tui_choose "Setup hook (runs after worktree create)" "${display_items[@]}")"
+    fi
 
     case "$chosen" in
         "None")
             setup_hook=""
             ;;
         "Custom path…")
-            setup_hook="$(tui_input "Relative path to setup hook script")"
+            setup_hook="$(tui_input "Relative path to setup hook script" "$_pf_setup_hook")"
             ;;
         *)
             # Resolve label back to filename: label format is "filename — desc"
@@ -354,7 +427,13 @@ _wtx_install_emit_toml() {
     printf 'branch_prefix = "%s"\n' "$(_wtx_toml_escape "${branch_prefix:-feature}")"
 }
 
+_wtx_install_prepare_toml_tmp() {
+    [[ -n "${_WTX_INSTALL_TMP:-}" ]] && return 0
+    _WTX_INSTALL_TMP="$(mktemp "$WORKSPACE_ROOT/.wtx-install-tmp.XXXXXX")" || return 1
+}
+
 _wtx_install_commit_toml() {
+    _wtx_install_prepare_toml_tmp || return $?
     _wtx_install_emit_toml > "$_WTX_INSTALL_TMP" && mv "$_WTX_INSTALL_TMP" "$WORKSPACE_ROOT/wtx.toml"
 }
 
@@ -468,13 +547,38 @@ _wtx_install_step10_extras() {
 # ---------------------------------------------------------------------------
 # Main run — wire step sequence (AC: 10)
 # ---------------------------------------------------------------------------
+_wtx_install_step0_idempotency() {
+    _WTX_INSTALL_MODE="overwrite"
+    [[ ! -f "$WORKSPACE_ROOT/wtx.toml" ]] && return 0
+
+    tui_style_box \
+        "wtx.toml already exists" \
+        "  $WORKSPACE_ROOT/wtx.toml"
+    _WTX_INSTALL_MODE="$(tui_choose "How do you want to proceed?" "skip" "overwrite" "merge")"
+}
+
 _wtx_install_run() {
     local _run_rc=0
 
     _wtx_install_preflight "$@" || return $?
 
-    # Step 0 — idempotency gate (placeholder — Story 1.5 / AD-13)
-    # _wtx_install_step0_idempotency
+    _wtx_install_step0_idempotency || return $?
+
+    if [[ "${_WTX_INSTALL_MODE:-overwrite}" = "skip" ]]; then
+        _WTX_LEDGER_KEYS+=("config")
+        _WTX_LEDGER_VALS+=("kept (existing)")
+        _wtx_install_step9_claude_hooks || _run_rc=$?
+        _wtx_install_step10_extras || _run_rc=$?
+        return $_run_rc
+    fi
+
+    if [[ "${_WTX_INSTALL_MODE:-overwrite}" = "merge" ]]; then
+        unset _WTX_CONFIG_LOADED
+        WTX_CONFIG="$WORKSPACE_ROOT/wtx.toml"
+        export WTX_CONFIG
+        # shellcheck source=../lib/wtx-config.sh disable=SC1091
+        source "$WTX_ROOT/lib/wtx-config.sh"
+    fi
 
     # Step 1 — Welcome banner
     _wtx_install_step_banner || return $?
