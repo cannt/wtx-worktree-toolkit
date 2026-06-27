@@ -11,6 +11,7 @@
 #   start [args...]     Create a new worktree
 #   done [args...]      Finalise + clean up a worktree
 #   status [args...]    Worktree dashboard
+#   install [args...]   Interactive installer wizard
 #   init                Interactive wtx.toml generator
 #   doctor              Dependency + install invariant check
 #   version             Print wtx version
@@ -39,6 +40,9 @@ WTX_ROOT="$(cd "$(dirname "$_wtx_self")/.." && pwd)"
 export WTX_ROOT
 unset _wtx_self _wtx_link
 
+# shellcheck source=../lib/wtx-install.sh disable=SC1091
+source "$WTX_ROOT/lib/wtx-install.sh"
+
 # --- WORKSPACE_ROOT resolution ------------------------------------------------
 # Prefer the main repo's path even when invoked from inside a linked worktree:
 # `git rev-parse --show-toplevel` returns the linked worktree's own path,
@@ -55,40 +59,6 @@ _wtx_resolve_workspace_root() {
 }
 WORKSPACE_ROOT="$(_wtx_resolve_workspace_root)"
 export WORKSPACE_ROOT
-
-# --- Small helpers ------------------------------------------------------------
-
-# Backslash-escape `\` then `"` so a string is safe to embed between "..." in
-# a TOML scalar. Order matters — escape backslashes first.
-_wtx_toml_escape() {
-    local s="$1"
-    s="${s//\\/\\\\}"
-    s="${s//\"/\\\"}"
-    printf '%s' "$s"
-}
-
-# Convert a comma-separated input to a TOML array literal. Whitespace around
-# items is trimmed. Globs are preserved verbatim (pathname expansion disabled).
-# Each item is TOML-escaped.
-_wtx_csv_to_toml_array() {
-    local input="$1" item out="[" first=1
-    set -f  # disable pathname expansion for the unquoted expansion below
-    local OLDIFS="$IFS"
-    IFS=','
-    # shellcheck disable=SC2206
-    local items=( $input )
-    IFS="$OLDIFS"
-    set +f
-    for item in "${items[@]}"; do
-        item="${item#"${item%%[![:space:]]*}"}"
-        item="${item%"${item##*[![:space:]]}"}"
-        [[ -z "$item" ]] && continue
-        if [[ $first -eq 1 ]]; then first=0; else out+=", "; fi
-        out+="\"$(_wtx_toml_escape "$item")\""
-    done
-    out+="]"
-    printf '%s' "$out"
-}
 
 # Abort if no interactive terminal is available. Init-style commands call
 # this so non-tty environments get a clear error instead of silently
@@ -129,6 +99,7 @@ COMMANDS:
   start [args]    Create a new worktree (interactive or scripted)
   done [args]     Finalise, push, open PR, and clean up a worktree
   status [args]   Dashboard: list, manage, rebase worktrees
+  install [args]  Run the interactive installer wizard
   init            Generate wtx.toml in the current workspace
   doctor          Check dependencies and install invariants
   version         Print wtx version
@@ -353,6 +324,9 @@ case "$cmd" in
         ;;
     status)
         _wtx_exec_script "worktree-status.sh" "$@"
+        ;;
+    install)
+        _wtx_exec_script "worktree-install.sh" "$@"
         ;;
     init)
         _wtx_init "$@"

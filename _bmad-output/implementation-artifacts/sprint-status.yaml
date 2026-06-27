@@ -1,5 +1,5 @@
 # generated: 2026-06-26
-# last_updated: 2026-06-26
+# last_updated: 2026-06-27
 # project: wtx
 # project_key: NOKEY
 # tracking_system: file-system
@@ -41,7 +41,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-06-26
-last_updated: 2026-06-26
+last_updated: 2026-06-27
 project: wtx
 project_key: NOKEY
 tracking_system: file-system
@@ -49,8 +49,8 @@ story_location: _bmad-output/implementation-artifacts
 
 development_status:
   # Epic 1: Interactive Installer
-  epic-1: backlog
-  1-1-wizard-shell-shared-write-primitives-preflight: backlog
+  epic-1: in-progress
+  1-1-wizard-shell-shared-write-primitives-preflight: done
   1-2-reference-templating-engine-config-prompts-plugin-discovery-toml-write: backlog
   1-3-claude-code-hooks-setup-step-9: backlog
   1-4-extras-menu-gradle-init-path-hint-step-10: backlog

@@ -5,6 +5,7 @@
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 WTX="$REPO_ROOT/bin/wtx"
+WTX_INSTALL_LIB="$REPO_ROOT/lib/wtx-install.sh"
 
 FAILS=0
 TOTAL=0
@@ -39,6 +40,7 @@ assert_contains() {
 out=$(bash "$WTX" help 2>&1); rc=$?
 assert_eq      "help: exit 0" 0 "$rc"
 assert_contains "help: prints USAGE" "USAGE:" "$out"
+assert_contains "help: includes install command" "install [args]" "$out"
 
 # -- Case 2: version is non-empty, whitespace-free, no leading v
 out=$(bash "$WTX" version); rc=$?
@@ -60,6 +62,7 @@ assert_contains "unknown cmd: stderr mentions bogus" "bogus" "$stderr"
 # -- Case 4: WTX_ROOT and WORKSPACE_ROOT are exported to child scripts
 tmpdir="$(mktemp -d)"
 mkdir -p "$tmpdir/scripts" "$tmpdir/lib"
+cp "$WTX_INSTALL_LIB" "$tmpdir/lib/wtx-install.sh" 2>/dev/null || true
 # Minimal child that echoes the two envs
 cat > "$tmpdir/scripts/worktree-start.sh" <<'EOF'
 #!/bin/bash
@@ -79,15 +82,18 @@ rm -rf "$tmpdir"
 
 # -- Case 5: dispatcher preflights and errors on missing child script
 tmpdir="$(mktemp -d)"
-mkdir -p "$tmpdir/bin"
+mkdir -p "$tmpdir/bin" "$tmpdir/lib"
 cp "$WTX" "$tmpdir/bin/wtx"
+cp "$WTX_INSTALL_LIB" "$tmpdir/lib/wtx-install.sh" 2>/dev/null || true
 # No scripts/ — start should fail preflight
 stderr=$(bash "$tmpdir/bin/wtx" start 2>&1 >/dev/null); rc=$?
 assert_eq       "preflight: exit 2 when child missing" 2 "$rc"
 assert_contains "preflight: error mentions child script" "child script not found" "$stderr"
 rm -rf "$tmpdir"
 
-# -- Case 6: source dispatcher (guard returns before running case) and invoke helpers
+# -- Case 6: source installer lib directly, then source dispatcher and invoke helpers
+# shellcheck source=../lib/wtx-install.sh
+source "$WTX_INSTALL_LIB"
 # shellcheck source=../bin/wtx
 source "$WTX"
 
@@ -112,6 +118,14 @@ assert_eq "_wtx_csv_to_toml_array: escapes quotes" '["plain", "with\"quote"]' "$
 # Case 6d: CSV trims whitespace around items and drops empties
 out="$(_wtx_csv_to_toml_array '  a , b ,  , c ')"
 assert_eq "_wtx_csv_to_toml_array: trims + drops empty" '["a", "b", "c"]' "$out"
+
+# Case 6e: sourced dispatcher still exposes installer helpers for _wtx_init
+if command -v _wtx_toml_escape >/dev/null 2>&1 && command -v _wtx_csv_to_toml_array >/dev/null 2>&1; then
+    TOTAL=$((TOTAL + 1)); printf 'PASS  dispatcher source: installer helpers exposed\n'
+else
+    FAILS=$((FAILS + 1)); TOTAL=$((TOTAL + 1))
+    printf 'FAIL  dispatcher source: installer helpers exposed\n'
+fi
 
 # -- Case 7: symlinked bin/wtx still resolves WTX_ROOT to the real install root
 tmpdir="$(mktemp -d)"
@@ -138,6 +152,24 @@ else
     # This environment is CI-sensitive; skip hard assert, just report informational.
     TOTAL=$((TOTAL + 1)); printf 'SKIP  init: tty guard not reachable under this harness (output: %q)\n' "$out"
 fi
+
+# -- Case 9: dispatcher routes install to scripts/worktree-install.sh
+tmpdir="$(mktemp -d)"
+mkdir -p "$tmpdir/bin" "$tmpdir/lib" "$tmpdir/scripts"
+cp "$WTX" "$tmpdir/bin/wtx"
+cp "$WTX_INSTALL_LIB" "$tmpdir/lib/wtx-install.sh" 2>/dev/null || true
+cat > "$tmpdir/scripts/worktree-install.sh" <<'EOF'
+#!/bin/bash
+echo "install-script:$*"
+EOF
+chmod +x "$tmpdir/scripts/worktree-install.sh"
+out=$(bash "$tmpdir/bin/wtx" install 2>&1); rc=$?
+assert_eq       "install route: no-arg exit 0" 0 "$rc"
+assert_contains "install route: no-arg reaches child" "install-script:" "$out"
+out=$(bash "$tmpdir/bin/wtx" install --dry-run 2>&1); rc=$?
+assert_eq       "install route: dry-run exit 0" 0 "$rc"
+assert_contains "install route: dry-run reaches child" "install-script:--dry-run" "$out"
+rm -rf "$tmpdir"
 
 # -- Summary
 echo
