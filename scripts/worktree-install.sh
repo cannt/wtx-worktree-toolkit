@@ -125,6 +125,14 @@ _wtx_install_step_banner() {
         "Press Ctrl-C at any time to abort."
 }
 
+_wtx_install_done_ledger_value() {
+    if [[ "${WTX_INSTALL_DRY_RUN:-0}" = "1" ]]; then
+        printf 'previewed (dry-run)'
+    else
+        printf 'done'
+    fi
+}
+
 # ---------------------------------------------------------------------------
 # Step 2 — Binary install with PATH detection (AC: 2, 3)
 # ---------------------------------------------------------------------------
@@ -164,12 +172,12 @@ _wtx_install_step2_binary() {
         install_args+=("--dry-run")
     fi
 
-    wtx_install_write_or_dryrun "would create: $WTX_INSTALL_PREFIX/bin/wtx" "${install_args[@]}"
+    wtx_install_write_or_dryrun "would symlink: $WTX_INSTALL_PREFIX/bin/wtx -> $WTX_ROOT/bin/wtx" "${install_args[@]}"
     local rc=$?
 
     _WTX_LEDGER_KEYS+=("symlink")
     if [[ $rc -eq 0 ]]; then
-        _WTX_LEDGER_VALS+=("done")
+        _WTX_LEDGER_VALS+=("$(_wtx_install_done_ledger_value)")
     else
         _WTX_LEDGER_VALS+=("failed")
     fi
@@ -466,7 +474,7 @@ _wtx_install_step9_claude_hooks() {
         printf 'wtx install: cannot cd to workspace root: %s\n' "$WORKSPACE_ROOT" >&2
         rc=1
     else
-        wtx_install_write_or_dryrun "would copy: hooks -> $WORKSPACE_ROOT/.claude/hooks/" "${install_args[@]}"
+        wtx_install_write_or_dryrun "would copy: $WTX_ROOT/hooks/worktree-*.sh -> $WORKSPACE_ROOT/.claude/hooks/" "${install_args[@]}"
         rc=$?
         if ! cd "$old_pwd"; then
             printf 'wtx install: could not restore directory: %s\n' "$old_pwd" >&2
@@ -476,7 +484,7 @@ _wtx_install_step9_claude_hooks() {
 
     _WTX_LEDGER_KEYS+=("hooks")
     if [[ $rc -eq 0 ]]; then
-        _WTX_LEDGER_VALS+=("done")
+        _WTX_LEDGER_VALS+=("$(_wtx_install_done_ledger_value)")
     else
         _WTX_LEDGER_VALS+=("failed")
     fi
@@ -504,11 +512,11 @@ _wtx_install_step10_extras() {
             install_args+=("--dry-run")
         fi
 
-        wtx_install_write_or_dryrun "would copy: gradle init -> $HOME/.gradle/init.d/worktree-cache.init.gradle.kts" "${install_args[@]}"
+        wtx_install_write_or_dryrun "would copy: $WTX_ROOT/share/gradle/worktree-cache.init.gradle.kts -> $HOME/.gradle/init.d/worktree-cache.init.gradle.kts" "${install_args[@]}"
         gradle_rc=$?
         _WTX_LEDGER_KEYS+=("gradle")
         if [[ $gradle_rc -eq 0 ]]; then
-            _WTX_LEDGER_VALS+=("done")
+            _WTX_LEDGER_VALS+=("$(_wtx_install_done_ledger_value)")
         else
             _WTX_LEDGER_VALS+=("failed")
             rc=$gradle_rc
@@ -557,6 +565,12 @@ _wtx_install_step0_idempotency() {
     _WTX_INSTALL_MODE="$(tui_choose "How do you want to proceed?" "skip" "overwrite" "merge")"
 }
 
+_wtx_install_step11_summary() {
+    if [[ "${WTX_INSTALL_DRY_RUN:-0}" = "1" ]]; then
+        printf '[dry-run] No files were written. Remove --dry-run to apply.\n'
+    fi
+}
+
 _wtx_install_run() {
     local _run_rc=0
 
@@ -569,6 +583,7 @@ _wtx_install_run() {
         _WTX_LEDGER_VALS+=("kept (existing)")
         _wtx_install_step9_claude_hooks || _run_rc=$?
         _wtx_install_step10_extras || _run_rc=$?
+        _wtx_install_step11_summary || _run_rc=$?
         return $_run_rc
     fi
 
@@ -595,9 +610,9 @@ _wtx_install_run() {
     # Atomic TOML write
     wtx_install_write_or_dryrun "would write: $WORKSPACE_ROOT/wtx.toml" _wtx_install_commit_toml
     local toml_rc=$?
-    if [[ $toml_rc -eq 0 && "${WTX_INSTALL_DRY_RUN:-0}" != "1" ]]; then
+    if [[ $toml_rc -eq 0 ]]; then
         _WTX_LEDGER_KEYS+=("config")
-        _WTX_LEDGER_VALS+=("done")
+        _WTX_LEDGER_VALS+=("$(_wtx_install_done_ledger_value)")
     elif [[ $toml_rc -ne 0 ]]; then
         _WTX_LEDGER_KEYS+=("config")
         _WTX_LEDGER_VALS+=("failed")
@@ -610,8 +625,8 @@ _wtx_install_run() {
     # Step 10a/10b — Extras menu
     _wtx_install_step10_extras || _run_rc=$?
 
-    # Step 11 — Completion summary + doctor handoff (placeholder — Story 1.7)
-    # _wtx_install_step11_summary
+    # Step 11 — Completion summary + doctor handoff (full table deferred to Story 1.7)
+    _wtx_install_step11_summary || _run_rc=$?
 
     return $_run_rc
 }

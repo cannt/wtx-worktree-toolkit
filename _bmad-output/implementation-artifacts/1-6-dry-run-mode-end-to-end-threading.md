@@ -1,6 +1,10 @@
+---
+baseline_commit: 9b530622d54b30882bf9c15952bdf81315e04d64
+---
+
 # Story 1.6: Dry-run mode - end-to-end threading
 
-Status: ready-for-dev
+Status: done
 
 ## Story
 
@@ -32,47 +36,47 @@ so that I can confirm the install plan before committing to it.
 
 ## Tasks / Subtasks
 
-- [ ] Audit every installer mutation path for dry-run threading (AC: 1-3)
-  - [ ] Confirm `_wtx_install_parse_args` still parses `--dry-run` before git/gum work in `_wtx_install_preflight`; do not reorder preflight.
-  - [ ] Confirm all real writes are behind `wtx_install_write_or_dryrun`: symlink install, TOML commit, hooks install, Gradle install.
-  - [ ] Grep for direct `install.sh` invocations or filesystem mutation commands in `scripts/worktree-install.sh`; remove or guard any bypass.
-  - [ ] Keep `install.sh` as a subprocess only; do not source it.
+- [x] Audit every installer mutation path for dry-run threading (AC: 1-3)
+  - [x] Confirm `_wtx_install_parse_args` still parses `--dry-run` before git/gum work in `_wtx_install_preflight`; do not reorder preflight.
+  - [x] Confirm all real writes are behind `wtx_install_write_or_dryrun`: symlink install, TOML commit, hooks install, Gradle install.
+  - [x] Grep for direct `install.sh` invocations or filesystem mutation commands in `scripts/worktree-install.sh`; remove or guard any bypass.
+  - [x] Keep `install.sh` as a subprocess only; do not source it.
 
-- [ ] Make dry-run preview lines precise enough for an end-to-end install plan (AC: 2, 3, 6)
-  - [ ] Keep the existing helper behavior: in dry-run it prints `[dry-run] <action-label>` and does not execute the command.
-  - [ ] Improve action labels where needed so the preview names the actual target and, when useful, the source: symlink target, `wtx.toml`, hooks destination, Gradle init destination.
-  - [ ] Preserve `--dry-run` in every delegated `install_args` array even though the guard suppresses execution; tests should assert the prepared args include it.
+- [x] Make dry-run preview lines precise enough for an end-to-end install plan (AC: 2, 3, 6)
+  - [x] Keep the existing helper behavior: in dry-run it prints `[dry-run] <action-label>` and does not execute the command.
+  - [x] Improve action labels where needed so the preview names the actual target and, when useful, the source: symlink target, `wtx.toml`, hooks destination, Gradle init destination.
+  - [x] Preserve `--dry-run` in every delegated `install_args` array even though the guard suppresses execution; tests should assert the prepared args include it.
 
-- [ ] Make dry-run ledger values truthful and complete (AC: 7, 8)
-  - [ ] In dry-run, do not append ledger values such as `done` for symlink/hooks/gradle/config mutations that were only previewed.
-  - [ ] Add a config ledger entry when the TOML write guard returns 0 in dry-run. Suggested value: `previewed (dry-run)`.
-  - [ ] Use one consistent dry-run ledger value for previewed write steps so Story 1.7 can map it cleanly; keep existing skipped values for user-declined steps and already-on-PATH checks.
-  - [ ] Do not change Story 1.5's skip-path ledger: `config = "kept (existing)"` remains correct when the user chooses `skip`.
+- [x] Make dry-run ledger values truthful and complete (AC: 7, 8)
+  - [x] In dry-run, do not append ledger values such as `done` for symlink/hooks/gradle/config mutations that were only previewed.
+  - [x] Add a config ledger entry when the TOML write guard returns 0 in dry-run. Suggested value: `previewed (dry-run)`.
+  - [x] Use one consistent dry-run ledger value for previewed write steps so Story 1.7 can map it cleanly; keep existing skipped values for user-declined steps and already-on-PATH checks.
+  - [x] Do not change Story 1.5's skip-path ledger: `config = "kept (existing)"` remains correct when the user chooses `skip`.
 
-- [ ] Add minimal Step 11 dry-run summary handling without stealing Story 1.7 scope (AC: 8)
-  - [ ] If `_wtx_install_step11_summary` does not exist, add it near the Step 11 placeholder.
-  - [ ] For Story 1.6, the function only needs to print `[dry-run] No files were written. Remove --dry-run to apply.` when `WTX_INSTALL_DRY_RUN=1`; it may be a no-op for non-dry-run.
-  - [ ] Call `_wtx_install_step11_summary` from `_wtx_install_run` after Step 10 on normal, overwrite, and merge paths.
-  - [ ] Decide whether the Story 1.5 `skip` path should call the summary too. If it does, preserve the existing Step 9/Step 10 optional failure tracking. If it does not, add a test or comment explaining why skip does not represent a complete dry-run install preview.
-  - [ ] Do not render the full `[ok]/[-]/[!]` ledger table or run `wtx doctor`; that belongs to Story 1.7.
+- [x] Add minimal Step 11 dry-run summary handling without stealing Story 1.7 scope (AC: 8)
+  - [x] If `_wtx_install_step11_summary` does not exist, add it near the Step 11 placeholder.
+  - [x] For Story 1.6, the function only needs to print `[dry-run] No files were written. Remove --dry-run to apply.` when `WTX_INSTALL_DRY_RUN=1`; it may be a no-op for non-dry-run.
+  - [x] Call `_wtx_install_step11_summary` from `_wtx_install_run` after Step 10 on normal, overwrite, and merge paths.
+  - [x] Decide whether the Story 1.5 `skip` path should call the summary too. If it does, preserve the existing Step 9/Step 10 optional failure tracking. If it does not, add a test or comment explaining why skip does not represent a complete dry-run install preview.
+  - [x] Do not render the full `[ok]/[-]/[!]` ledger table or run `wtx doctor`; that belongs to Story 1.7.
 
-- [ ] Add focused tests to `tests/test-wtx-install.sh` after the Story 1.5 section (AC: 1-9)
-  - [ ] Unit: dry-run helper still prints and skips command execution.
-  - [ ] Unit/run-level: symlink, TOML, hooks, and Gradle paths prepare `--dry-run` args and use `wtx_install_write_or_dryrun`.
-  - [ ] Unit: dry-run ledger values use the chosen preview value, and config records a dry-run ledger entry.
-  - [ ] E2E: real wizard dry-run through the no-existing-`wtx.toml` path with gum shim, hooks=yes, gradle=yes, path-hint=yes; assert prompts run, preview lines print, and no files are created.
-  - [ ] E2E: existing `wtx.toml` + `overwrite` dry-run leaves the file byte-for-byte unchanged and prints the TOML preview line.
-  - [ ] E2E: existing `wtx.toml` + `merge` dry-run pre-fills prompts and leaves the file byte-for-byte unchanged.
-  - [ ] E2E: no `.wtx-install-tmp.*` leftovers remain after every dry-run path.
-  - [ ] Summary: dry-run output includes the required Step 11 header note exactly once.
+- [x] Add focused tests to `tests/test-wtx-install.sh` after the Story 1.5 section (AC: 1-9)
+  - [x] Unit: dry-run helper still prints and skips command execution.
+  - [x] Unit/run-level: symlink, TOML, hooks, and Gradle paths prepare `--dry-run` args and use `wtx_install_write_or_dryrun`.
+  - [x] Unit: dry-run ledger values use the chosen preview value, and config records a dry-run ledger entry.
+  - [x] E2E: real wizard dry-run through the no-existing-`wtx.toml` path with gum shim, hooks=yes, gradle=yes, path-hint=yes; assert prompts run, preview lines print, and no files are created.
+  - [x] E2E: existing `wtx.toml` + `overwrite` dry-run leaves the file byte-for-byte unchanged and prints the TOML preview line.
+  - [x] E2E: existing `wtx.toml` + `merge` dry-run pre-fills prompts and leaves the file byte-for-byte unchanged.
+  - [x] E2E: no `.wtx-install-tmp.*` leftovers remain after every dry-run path.
+  - [x] Summary: dry-run output includes the required Step 11 header note exactly once.
 
-- [ ] Run validation (AC: 9)
-  - [ ] `bash -n bin/wtx lib/*.sh scripts/*.sh hooks/*.sh plugins/*.sh`
-  - [ ] `bash tests/test-wtx-config.sh`
-  - [ ] `bash tests/test-wtx-dispatcher.sh`
-  - [ ] `bash tests/test-wtx-install.sh`
-  - [ ] `bash tests/test-install.sh`
-  - [ ] `bash tests/test-worktree-registry.sh`
+- [x] Run validation (AC: 9)
+  - [x] `bash -n bin/wtx lib/*.sh scripts/*.sh hooks/*.sh plugins/*.sh`
+  - [x] `bash tests/test-wtx-config.sh`
+  - [x] `bash tests/test-wtx-dispatcher.sh`
+  - [x] `bash tests/test-wtx-install.sh`
+  - [x] `bash tests/test-install.sh`
+  - [x] `bash tests/test-worktree-registry.sh`
 
 ## Dev Notes
 
@@ -171,6 +175,67 @@ GPT-5 Codex
 
 ### Debug Log References
 
+- `bash -n bin/wtx lib/*.sh scripts/*.sh hooks/*.sh plugins/*.sh` -> passed
+- `bash tests/test-wtx-config.sh` -> 26/26 passed
+- `bash tests/test-wtx-dispatcher.sh` -> 22/22 passed
+- `bash tests/test-wtx-install.sh` -> 283/283 passed
+- `bash tests/test-install.sh` -> 25/25 passed
+- `bash tests/test-worktree-registry.sh` -> 19/19 passed
+
 ### Completion Notes List
 
+- Added a shared dry-run-aware ledger value for previewed wizard writes so symlink, config, hooks, and Gradle previews record `previewed (dry-run)` instead of `done`.
+- Improved wizard dry-run preview labels to name concrete symlink, hook, TOML, and Gradle source/destination paths while preserving `--dry-run` in delegated `install.sh` argument arrays.
+- Added minimal Step 11 dry-run summary output exactly as required: `[dry-run] No files were written. Remove --dry-run to apply.`
+- Wired Step 11 through normal, overwrite, merge, and skip paths while preserving optional Step 9/Step 10 failure tracking.
+- Extended installer tests with unit, run-level, static, and E2E dry-run coverage for no-existing-config, overwrite, and merge paths, including no-write and no-temp assertions.
+
 ### File List
+
+- scripts/worktree-install.sh
+- tests/test-wtx-install.sh
+- _bmad-output/implementation-artifacts/1-6-dry-run-mode-end-to-end-threading.md
+- _bmad-output/implementation-artifacts/sprint-status.yaml
+- _bmad-output/implementation-artifacts/tests/test-summary.md
+- _bmad-output/story-automator/orchestration-1-20260626-224222.md
+
+### Change Log
+
+- 2026-06-27: Implemented Story 1.6 dry-run end-to-end threading and validation coverage.
+- 2026-06-27: Code review - verified dry-run ACs, updated File List for review/test artifacts, reran validation, and marked status done.
+- 2026-06-27: Review follow-up - synced story automator orchestration progress for completed Story 1.6 handoff to Story 1.7.
+
+### Senior Developer Review (AI)
+
+Reviewer: Codex on 2026-06-27
+
+Outcome: Approved. No critical or high issues remain.
+
+Inputs loaded:
+- Story file: `_bmad-output/implementation-artifacts/1-6-dry-run-mode-end-to-end-threading.md`
+- Story context: no separate story-context file found; reviewed story, epic requirements, UX spec, project context, architecture spine, source implementation, tests, and sprint status.
+- Epic tech spec: no standalone epic tech spec found; reviewed `_bmad-output/planning-artifacts/epics.md` and `_bmad-output/planning-artifacts/architecture/architecture-wtx-install-2026-06-26/ARCHITECTURE-SPINE.md`.
+- Tech stack: pure Bash targeting bash 3.2, shell-only tests.
+- MCP/doc search: web fallback reviewed the GNU Bash manual for shell behavior reference: https://www.gnu.org/software/bash/manual/bash.html.
+
+Findings fixed:
+- MEDIUM: Current git changes included review/test automation artifacts not listed in the story File List (`_bmad-output/implementation-artifacts/tests/test-summary.md`, `_bmad-output/story-automator/orchestration-1-20260626-224222.md`). Fixed by adding them to the File List.
+- LOW: Story automator orchestration had advanced to Story 1.7 in the header/log but still showed Story 1.6 as `in-progress` in the progress table. Fixed by marking Story 1.6 review/commit/status columns `done`.
+
+Findings verified as implemented:
+- AC 1: `_wtx_install_parse_args` parses and exports `WTX_INSTALL_DRY_RUN` before git and gum checks.
+- AC 2-3: Symlink, TOML, hooks, and Gradle mutation paths all route through `wtx_install_write_or_dryrun`; delegated `install.sh` argument arrays preserve `--dry-run`; no direct `install.sh` execution bypass remains.
+- AC 4-6: New-config, overwrite, and merge dry-run E2E tests assert prompts run, preview lines are emitted, and TOML/temp/hooks/symlink/Gradle targets are absent or unchanged.
+- AC 7-8: Previewed mutations record `previewed (dry-run)` instead of `done`, config is represented in dry-run, skip keeps `kept (existing)`, and the exact Step 11 dry-run note appears once.
+
+Validation:
+- `bash -n bin/wtx lib/*.sh scripts/*.sh hooks/*.sh plugins/*.sh` passed.
+- `bash tests/test-wtx-config.sh` passed: 26/26.
+- `bash tests/test-wtx-dispatcher.sh` passed: 22/22.
+- `bash tests/test-wtx-install.sh` passed: 283/283.
+- `bash tests/test-install.sh` passed: 25/25.
+- `bash tests/test-worktree-registry.sh` passed: 19/19.
+
+## Story Completion Status
+
+done

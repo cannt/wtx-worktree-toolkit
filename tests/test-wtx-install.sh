@@ -648,7 +648,7 @@ _wtx_install_step9_claude_hooks >/dev/null
 rc=$?
 assert_eq "step9 dry-run: returns 0" 0 "$rc"
 assert_contains "step9 dry-run: delegated args include dry-run" "--dry-run" "$step9_args"
-assert_eq "step9 dry-run: ledger done" "done" "${_WTX_LEDGER_VALS[0]:-}"
+assert_eq "step9 dry-run: ledger previewed" "previewed (dry-run)" "${_WTX_LEDGER_VALS[0]:-}"
 rm -rf "$tmpdir28"
 
 # -- Case 29: _wtx_install_run tracks Step 9 failure but returns it after later placeholders
@@ -865,7 +865,7 @@ wtx_install_write_or_dryrun() {
 _wtx_install_step10_extras >/dev/null
 rc=$?
 assert_eq "step10 gradle success: returns 0" 0 "$rc"
-assert_eq "step10 gradle success: action label" "would copy: gradle init -> $HOME/.gradle/init.d/worktree-cache.init.gradle.kts" "$step10_action"
+assert_eq "step10 gradle success: action label" "would copy: $REPO_ROOT/share/gradle/worktree-cache.init.gradle.kts -> $HOME/.gradle/init.d/worktree-cache.init.gradle.kts" "$step10_action"
 assert_eq "step10 gradle success: delegated args" "<bash><$REPO_ROOT/install.sh><--gradle>" "$step10_args"
 assert_eq "step10 gradle success: ledger done" "done" "${_WTX_LEDGER_VALS[0]:-}"
 assert_eq "step10 gradle success: path-hint skipped (already on PATH)" "skipped (already on PATH)" "${_WTX_LEDGER_VALS[1]:-}"
@@ -909,6 +909,7 @@ _wtx_install_step10_extras >/dev/null
 rc=$?
 assert_eq "step10 dry-run: returns 0" 0 "$rc"
 assert_eq "step10 dry-run: delegated args include dry-run" "<bash><$REPO_ROOT/install.sh><--gradle><--dry-run>" "$step10_args"
+assert_eq "step10 dry-run: ledger previewed" "previewed (dry-run)" "${_WTX_LEDGER_VALS[0]:-}"
 assert_eq "step10 dry-run: path-hint skipped (already on PATH)" "skipped (already on PATH)" "${_WTX_LEDGER_VALS[1]:-}"
 rm -rf "$tmpdir38"
 
@@ -1052,6 +1053,12 @@ _write_install_gum_shim() {
 cmd="$1"
 shift
 
+_gum_log() {
+    if [[ -n "${WTX_GUM_LOG:-}" ]]; then
+        printf '%s\n' "$*" >> "$WTX_GUM_LOG"
+    fi
+}
+
 case "$cmd" in
     input)
         prompt=""
@@ -1064,6 +1071,7 @@ case "$cmd" in
                 *) shift ;;
             esac
         done
+        _gum_log "input:$prompt"
         case "$prompt" in
             "Install prefix "*) printf '%s\n' "${WTX_GUM_INSTALL_PREFIX:-$value}" ;;
             "Forge org / owner slug "*) printf '%s\n' "${WTX_GUM_FORGE_ORG:-example-org}" ;;
@@ -1084,7 +1092,9 @@ case "$cmd" in
                 *) opts+=("$1"); shift ;;
             esac
         done
+        _gum_log "choose:$header"
         case "$header" in
+            "How do you want to proceed?") printf '%s\n' "${WTX_GUM_IDEMPOTENCY_MODE:-${opts[0]:-skip}}" ;;
             "Forge type") printf 'github\n' ;;
             "Detection markers") printf '.git (any git repo — default)\n' ;;
             "Setup hook (runs after worktree create)") printf 'None\n' ;;
@@ -1093,6 +1103,7 @@ case "$cmd" in
         ;;
     confirm)
         prompt="$1"
+        _gum_log "confirm:$prompt"
         case "$prompt" in
             "Self-hosted instance?") exit 1 ;;
             "Add another Jira mapping?") exit 1 ;;
@@ -1678,6 +1689,292 @@ leftovers59="$(find "$tmpdir59/repo" -name '.wtx-install-tmp.*' -print)"
 assert_eq "idempotency gate pre-choice temp: no leftovers" "" "$leftovers59"
 rm -rf "$tmpdir59"
 unset WORKSPACE_ROOT WTX_ROOT
+
+# ---------------------------------------------------------------------------
+# Story 1.6 dry-run end-to-end threading (Cases 60-68)
+# ---------------------------------------------------------------------------
+
+# Restore real wizard functions after Story 1.5 stubs.
+unset -f _wtx_install_preflight _wtx_install_step0_idempotency _wtx_install_step_banner \
+    _wtx_install_step2_binary _wtx_install_steps3_7_config _wtx_install_step8_hook \
+    _wtx_install_step9_claude_hooks _wtx_install_step10_extras _wtx_install_step11_summary \
+    _wtx_install_run wtx_install_write_or_dryrun
+unset _WTX_INSTALL_LIB_LOADED
+source "$LIB"
+eval "$wizard_head" 2>/dev/null || true
+
+# -- Case 60: dry-run helper still prints and skips command execution
+tmpdir60="$(mktemp -d)"
+marker60="$tmpdir60/marker"
+WTX_INSTALL_DRY_RUN=0
+_wtx_install_parse_args --dry-run
+rc=$?
+assert_eq "1.6 parse dry-run: returns 0" 0 "$rc"
+assert_eq "1.6 parse dry-run: sets flag" "1" "$WTX_INSTALL_DRY_RUN"
+bash -c '[[ "${WTX_INSTALL_DRY_RUN:-0}" = "1" ]]'
+rc=$?
+assert_eq "1.6 parse dry-run: exports flag" 0 "$rc"
+WTX_INSTALL_DRY_RUN=1
+out60="$(wtx_install_write_or_dryrun "would write: $marker60" touch "$marker60" 2>&1)"
+rc=$?
+assert_eq "1.6 helper dry-run: returns 0" 0 "$rc"
+assert_eq "1.6 helper dry-run: exact preview line" "[dry-run] would write: $marker60" "$out60"
+[[ ! -e "$marker60" ]]; assert_ok "1.6 helper dry-run: command skipped" $?
+rm -rf "$tmpdir60"
+
+# -- Case 61: Step 2 dry-run prepares --dry-run args, precise label, preview ledger
+tmpdir61="$(mktemp -d)"
+export WTX_ROOT="$REPO_ROOT"
+export HOME="$tmpdir61/home"
+WTX_INSTALL_DRY_RUN=1
+WTX_INSTALL_PREFIX=""
+PATH="/usr/bin:/bin"
+_WTX_LEDGER_KEYS=()
+_WTX_LEDGER_VALS=()
+step61_action=""
+step61_args=""
+tui_input() { printf '%s\n' "$tmpdir61/prefix"; }
+wtx_install_write_or_dryrun() {
+    step61_action="$1"
+    shift
+    step61_args="$(printf '<%s>' "$@")"
+    return 0
+}
+_wtx_install_step2_binary >/dev/null
+rc=$?
+assert_eq "1.6 step2 dry-run: returns 0" 0 "$rc"
+assert_eq "1.6 step2 dry-run: precise symlink label" "would symlink: $tmpdir61/prefix/bin/wtx -> $REPO_ROOT/bin/wtx" "$step61_action"
+assert_eq "1.6 step2 dry-run: delegated args include dry-run" "<bash><$REPO_ROOT/install.sh><--prefix><$tmpdir61/prefix><--dry-run>" "$step61_args"
+assert_eq "1.6 step2 dry-run: ledger key" "symlink" "${_WTX_LEDGER_KEYS[0]:-}"
+assert_eq "1.6 step2 dry-run: ledger previewed" "previewed (dry-run)" "${_WTX_LEDGER_VALS[0]:-}"
+rm -rf "$tmpdir61"
+
+# -- Case 62: Step 9 and Step 10 dry-run prepare --dry-run args and preview ledgers
+tmpdir62="$(mktemp -d)"
+export WTX_ROOT="$REPO_ROOT"
+export WORKSPACE_ROOT="$tmpdir62/workspace"
+export HOME="$tmpdir62/home"
+export WTX_INSTALL_PREFIX="$tmpdir62/prefix"
+mkdir -p "$WORKSPACE_ROOT"
+WTX_INSTALL_DRY_RUN=1
+PATH="$WTX_INSTALL_PREFIX/bin:/usr/bin:/bin"
+_WTX_LEDGER_KEYS=()
+_WTX_LEDGER_VALS=()
+step62_actions=""
+step62_args=""
+tui_style_box() { for l in "$@"; do echo "  $l"; done; }
+tui_confirm() { return 0; }
+wtx_install_write_or_dryrun() {
+    step62_actions="${step62_actions}[$1]"
+    shift
+    step62_args="${step62_args}$(printf '<%s>' "$@")|"
+    return 0
+}
+_wtx_install_step9_claude_hooks >/dev/null
+_wtx_install_step10_extras >/dev/null
+assert_contains "1.6 step9 dry-run: precise hooks label" "[would copy: $REPO_ROOT/hooks/worktree-*.sh -> $WORKSPACE_ROOT/.claude/hooks/" "$step62_actions"
+assert_contains "1.6 step9 dry-run: delegated args include dry-run" "<bash><$REPO_ROOT/install.sh><--hooks><--dry-run>" "$step62_args"
+assert_contains "1.6 step10 dry-run: precise Gradle label" "[would copy: $REPO_ROOT/share/gradle/worktree-cache.init.gradle.kts -> $HOME/.gradle/init.d/worktree-cache.init.gradle.kts]" "$step62_actions"
+assert_contains "1.6 step10 dry-run: delegated args include dry-run" "<bash><$REPO_ROOT/install.sh><--gradle><--dry-run>" "$step62_args"
+assert_eq "1.6 step9 dry-run: ledger previewed" "previewed (dry-run)" "${_WTX_LEDGER_VALS[0]:-}"
+assert_eq "1.6 step10 dry-run: ledger previewed" "previewed (dry-run)" "${_WTX_LEDGER_VALS[1]:-}"
+rm -rf "$tmpdir62"
+
+# -- Case 63: run-level dry-run config ledger is previewed and Step 11 note appears once
+tmpdir63="$(mktemp -d)"
+unset -f _wtx_install_run _wtx_install_step11_summary
+eval "$wizard_head" 2>/dev/null || true
+_wtx_install_preflight() {
+    WORKSPACE_ROOT="$tmpdir63"
+    WTX_ROOT="$REPO_ROOT"
+    WTX_INSTALL_DRY_RUN=1
+    _WTX_LEDGER_KEYS=()
+    _WTX_LEDGER_VALS=()
+    export WORKSPACE_ROOT WTX_ROOT WTX_INSTALL_DRY_RUN
+    return 0
+}
+_wtx_install_step0_idempotency() { _WTX_INSTALL_MODE="overwrite"; return 0; }
+_wtx_install_step_banner() { return 0; }
+_wtx_install_step2_binary() { return 0; }
+_wtx_install_steps3_7_config() { return 0; }
+_wtx_install_step8_hook() { return 0; }
+wtx_install_write_or_dryrun() { return 0; }
+_wtx_install_step9_claude_hooks() { return 0; }
+_wtx_install_step10_extras() { return 0; }
+out63_file="$tmpdir63/out"
+_wtx_install_run > "$out63_file" 2>&1
+rc=$?
+assert_eq "1.6 run dry-run config: exits 0" 0 "$rc"
+assert_eq "1.6 run dry-run config: ledger key" "config" "${_WTX_LEDGER_KEYS[0]:-}"
+assert_eq "1.6 run dry-run config: ledger previewed" "previewed (dry-run)" "${_WTX_LEDGER_VALS[0]:-}"
+summary_count63="$(grep -F -c '[dry-run] No files were written. Remove --dry-run to apply.' "$out63_file" || true)"
+assert_eq "1.6 run dry-run config: summary once" "1" "$summary_count63"
+rm -rf "$tmpdir63"
+
+# -- Case 64: skip dry-run keeps config ledger and still reaches Step 11 without hiding optional failures
+tmpdir64="$(mktemp -d)"
+printf '[forge]\ntype = "github"\n' > "$tmpdir64/wtx.toml"
+_wtx_install_preflight() {
+    WORKSPACE_ROOT="$tmpdir64"
+    WTX_ROOT="$REPO_ROOT"
+    WTX_INSTALL_DRY_RUN=1
+    _WTX_LEDGER_KEYS=()
+    _WTX_LEDGER_VALS=()
+    export WORKSPACE_ROOT WTX_ROOT WTX_INSTALL_DRY_RUN
+    return 0
+}
+_wtx_install_step0_idempotency() { _WTX_INSTALL_MODE="skip"; return 0; }
+_wtx_install_step9_claude_hooks() { return 5; }
+_wtx_install_step10_extras() { return 0; }
+out64_file="$tmpdir64/out"
+_wtx_install_run > "$out64_file" 2>&1
+rc=$?
+assert_eq "1.6 skip dry-run: preserves optional failure rc" 5 "$rc"
+assert_eq "1.6 skip dry-run: config kept ledger" "kept (existing)" "${_WTX_LEDGER_VALS[0]:-}"
+summary_count64="$(grep -F -c '[dry-run] No files were written. Remove --dry-run to apply.' "$out64_file" || true)"
+assert_eq "1.6 skip dry-run: summary once" "1" "$summary_count64"
+rm -rf "$tmpdir64"
+
+# Restore real functions before static and E2E checks.
+unset -f _wtx_install_preflight _wtx_install_step0_idempotency _wtx_install_step_banner \
+    _wtx_install_step2_binary _wtx_install_steps3_7_config _wtx_install_step8_hook \
+    _wtx_install_step9_claude_hooks _wtx_install_step10_extras _wtx_install_step11_summary \
+    _wtx_install_run wtx_install_write_or_dryrun
+unset _WTX_INSTALL_LIB_LOADED
+source "$LIB"
+eval "$wizard_head" 2>/dev/null || true
+
+# -- Case 65: no direct install.sh execution path bypasses the dry-run guard
+direct_bypass65="$(grep -n 'bash[[:space:]]*"\$WTX_ROOT/install\.sh"' "$WIZARD" || true)"
+assert_eq "1.6 static: no direct install.sh bypass" "" "$direct_bypass65"
+
+# -- Case 66: full dry-run without existing wtx.toml previews every write and creates no files
+tmpdir66="$(mktemp -d)"
+mkdir -p "$tmpdir66/home" "$tmpdir66/repo"
+( cd "$tmpdir66/repo" && git init -q )
+_write_install_gum_shim "$tmpdir66/bin"
+gum_log66="$tmpdir66/gum.log"
+out66="$(
+    cd "$tmpdir66/repo" && \
+    HOME="$tmpdir66/home" \
+    PATH="$tmpdir66/bin:/usr/bin:/bin" \
+    WTX_ROOT="$REPO_ROOT" \
+    WORKSPACE_ROOT="$tmpdir66/repo" \
+    WTX_GUM_LOG="$gum_log66" \
+    WTX_GUM_INSTALL_PREFIX="$tmpdir66/prefix" \
+    WTX_GUM_HOOKS=yes \
+    WTX_GUM_GRADLE=yes \
+    WTX_GUM_PATH_HINT=yes \
+    bash "$WIZARD" --dry-run 2>&1
+)"
+rc=$?
+assert_eq "1.6 e2e dry-run new: exits 0" 0 "$rc"
+assert_contains "1.6 e2e dry-run new: symlink preview" "[dry-run] would symlink: $tmpdir66/prefix/bin/wtx -> $REPO_ROOT/bin/wtx" "$out66"
+assert_contains "1.6 e2e dry-run new: TOML preview" "[dry-run] would write: $tmpdir66/repo/wtx.toml" "$out66"
+assert_contains "1.6 e2e dry-run new: hooks preview" "[dry-run] would copy: $REPO_ROOT/hooks/worktree-*.sh -> $tmpdir66/repo/.claude/hooks/" "$out66"
+assert_contains "1.6 e2e dry-run new: Gradle preview" "[dry-run] would copy: $REPO_ROOT/share/gradle/worktree-cache.init.gradle.kts -> $tmpdir66/home/.gradle/init.d/worktree-cache.init.gradle.kts" "$out66"
+gum_log66_text="$(cat "$gum_log66")"
+assert_contains "1.6 e2e dry-run new: hooks prompt runs" "confirm:Install Claude Code hooks?" "$gum_log66_text"
+assert_contains "1.6 e2e dry-run new: Gradle prompt runs" "confirm:Install Gradle worktree-cache init script to ~/.gradle/init.d/?" "$gum_log66_text"
+assert_contains "1.6 e2e dry-run new: PATH hint prompt runs" "confirm:Show PATH setup hint?" "$gum_log66_text"
+summary_count66="$(printf '%s\n' "$out66" | grep -F -c '[dry-run] No files were written. Remove --dry-run to apply.' || true)"
+assert_eq "1.6 e2e dry-run new: summary once" "1" "$summary_count66"
+[[ ! -e "$tmpdir66/repo/wtx.toml" ]]; assert_ok "1.6 e2e dry-run new: no TOML write" $?
+[[ ! -e "$tmpdir66/repo/.claude/hooks/worktree-create.sh" ]]; assert_ok "1.6 e2e dry-run new: no hooks write" $?
+[[ ! -d "$tmpdir66/repo/.claude/hooks" ]]; assert_ok "1.6 e2e dry-run new: no hooks directory" $?
+[[ ! -e "$tmpdir66/prefix/bin/wtx" ]]; assert_ok "1.6 e2e dry-run new: no symlink write" $?
+[[ ! -e "$tmpdir66/home/.gradle/init.d/worktree-cache.init.gradle.kts" ]]; assert_ok "1.6 e2e dry-run new: no Gradle write" $?
+leftovers66="$(find "$tmpdir66/repo" -name '.wtx-install-tmp.*' -print)"
+assert_eq "1.6 e2e dry-run new: no TOML temp leftovers" "" "$leftovers66"
+rm -rf "$tmpdir66"
+
+# -- Case 67: existing wtx.toml + overwrite dry-run leaves file byte-for-byte unchanged
+tmpdir67="$(mktemp -d)"
+mkdir -p "$tmpdir67/home" "$tmpdir67/repo"
+( cd "$tmpdir67/repo" && git init -q )
+cat > "$tmpdir67/repo/wtx.toml" <<'EOF67'
+[forge]
+type = "github"
+org = "existing"
+EOF67
+cp "$tmpdir67/repo/wtx.toml" "$tmpdir67/original.toml"
+_write_install_gum_shim "$tmpdir67/bin"
+gum_log67="$tmpdir67/gum.log"
+out67="$(
+    cd "$tmpdir67/repo" && \
+    HOME="$tmpdir67/home" \
+    PATH="$tmpdir67/bin:/usr/bin:/bin" \
+    WTX_ROOT="$REPO_ROOT" \
+    WORKSPACE_ROOT="$tmpdir67/repo" \
+    WTX_GUM_LOG="$gum_log67" \
+    WTX_GUM_IDEMPOTENCY_MODE=overwrite \
+    WTX_GUM_INSTALL_PREFIX="$tmpdir67/prefix" \
+    WTX_GUM_HOOKS=no \
+    WTX_GUM_GRADLE=no \
+    WTX_GUM_PATH_HINT=no \
+    bash "$WIZARD" --dry-run 2>&1
+)"
+rc=$?
+assert_eq "1.6 e2e dry-run overwrite: exits 0" 0 "$rc"
+assert_contains "1.6 e2e dry-run overwrite: TOML preview" "[dry-run] would write: $tmpdir67/repo/wtx.toml" "$out67"
+gum_log67_text="$(cat "$gum_log67")"
+assert_contains "1.6 e2e dry-run overwrite: overwrite prompt runs" "choose:How do you want to proceed?" "$gum_log67_text"
+assert_contains "1.6 e2e dry-run overwrite: forge prompt runs" "choose:Forge type" "$gum_log67_text"
+assert_contains "1.6 e2e dry-run overwrite: org prompt runs" "input:Forge org / owner slug " "$gum_log67_text"
+assert_contains "1.6 e2e dry-run overwrite: detection prompt runs" "choose:Detection markers" "$gum_log67_text"
+assert_contains "1.6 e2e dry-run overwrite: defaults prompt runs" "input:Default base branch " "$gum_log67_text"
+assert_contains "1.6 e2e dry-run overwrite: setup-hook prompt runs" "choose:Setup hook (runs after worktree create)" "$gum_log67_text"
+cmp -s "$tmpdir67/original.toml" "$tmpdir67/repo/wtx.toml"
+assert_ok "1.6 e2e dry-run overwrite: wtx.toml unchanged" $?
+summary_count67="$(printf '%s\n' "$out67" | grep -F -c '[dry-run] No files were written. Remove --dry-run to apply.' || true)"
+assert_eq "1.6 e2e dry-run overwrite: summary once" "1" "$summary_count67"
+leftovers67="$(find "$tmpdir67/repo" -name '.wtx-install-tmp.*' -print)"
+assert_eq "1.6 e2e dry-run overwrite: no TOML temp leftovers" "" "$leftovers67"
+rm -rf "$tmpdir67"
+
+# -- Case 68: existing wtx.toml + merge dry-run leaves file byte-for-byte unchanged
+tmpdir68="$(mktemp -d)"
+mkdir -p "$tmpdir68/home" "$tmpdir68/repo"
+( cd "$tmpdir68/repo" && git init -q )
+cat > "$tmpdir68/repo/wtx.toml" <<'EOF68'
+[forge]
+type = "gitlab"
+org = "team"
+
+[defaults]
+base_branch = "develop"
+branch_prefix = "feat"
+EOF68
+cp "$tmpdir68/repo/wtx.toml" "$tmpdir68/original.toml"
+_write_install_gum_shim "$tmpdir68/bin"
+gum_log68="$tmpdir68/gum.log"
+out68="$(
+    cd "$tmpdir68/repo" && \
+    HOME="$tmpdir68/home" \
+    PATH="$tmpdir68/bin:/usr/bin:/bin" \
+    WTX_ROOT="$REPO_ROOT" \
+    WORKSPACE_ROOT="$tmpdir68/repo" \
+    WTX_GUM_LOG="$gum_log68" \
+    WTX_GUM_IDEMPOTENCY_MODE=merge \
+    WTX_GUM_INSTALL_PREFIX="$tmpdir68/prefix" \
+    WTX_GUM_HOOKS=no \
+    WTX_GUM_GRADLE=no \
+    WTX_GUM_PATH_HINT=no \
+    bash "$WIZARD" --dry-run 2>&1
+)"
+rc=$?
+assert_eq "1.6 e2e dry-run merge: exits 0" 0 "$rc"
+assert_contains "1.6 e2e dry-run merge: TOML preview" "[dry-run] would write: $tmpdir68/repo/wtx.toml" "$out68"
+gum_log68_text="$(cat "$gum_log68")"
+assert_contains "1.6 e2e dry-run merge: merge prompt runs" "choose:How do you want to proceed?" "$gum_log68_text"
+assert_contains "1.6 e2e dry-run merge: config prompts run" "input:Default base branch " "$gum_log68_text"
+cmp -s "$tmpdir68/original.toml" "$tmpdir68/repo/wtx.toml"
+assert_ok "1.6 e2e dry-run merge: wtx.toml unchanged" $?
+summary_count68="$(printf '%s\n' "$out68" | grep -F -c '[dry-run] No files were written. Remove --dry-run to apply.' || true)"
+assert_eq "1.6 e2e dry-run merge: summary once" "1" "$summary_count68"
+leftovers68="$(find "$tmpdir68/repo" -name '.wtx-install-tmp.*' -print)"
+assert_eq "1.6 e2e dry-run merge: no TOML temp leftovers" "" "$leftovers68"
+rm -rf "$tmpdir68"
 
 echo
 if [[ $FAILS -eq 0 ]]; then

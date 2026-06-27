@@ -1,3 +1,52 @@
+# Test Automation Summary — Story 1.6: Dry-run mode end-to-end threading
+
+**Feature:** `wtx install --dry-run` previews every wizard mutation without writing files.
+**Story file:** `_bmad-output/implementation-artifacts/1-6-dry-run-mode-end-to-end-threading.md`
+**Date:** 2026-06-27
+**Framework:** Repo-native bash assertion harness (`assert_eq` / `assert_contains` / `assert_ok`) — shell-only, no external test framework.
+
+## Scope
+
+`wtx` is a shell CLI with no HTTP API and no browser UI. For this story, "E2E" means full wizard runs against temporary git workspaces using the existing gum shim, with filesystem assertions before and after `scripts/worktree-install.sh --dry-run`.
+
+## Generated / extended tests
+
+### API Tests
+- [x] Not applicable — Story 1.6 is a Bash CLI installer wizard flow with no HTTP/API endpoint.
+
+### E2E / integration tests
+- [x] `tests/test-wtx-install.sh` Story 1.6 Cases 60-68 cover dry-run parsing, write chokepoint behavior, delegated `install.sh --dry-run` arguments, truthful dry-run ledger values, Step 11 note, static no-bypass guard, and full wizard dry-run flows.
+- [x] Added direct `--dry-run` parser assertions: `_wtx_install_parse_args --dry-run` returns 0, sets `WTX_INSTALL_DRY_RUN=1`, and exports the flag to child commands.
+- [x] Added overwrite dry-run prompt assertions: existing `wtx.toml` + `overwrite` still drives the downstream forge/org/detection/defaults/setup-hook prompts while leaving the file byte-for-byte unchanged.
+- [x] `tests/test-wtx-install.sh` Case 66 now also asserts the dry-run does not create `$WORKSPACE_ROOT/.claude/hooks/`, not only individual hook files.
+- [x] `tests/test-wtx-install.sh` Case 67 now asserts overwrite dry-run emits the required Step 11 dry-run note exactly once.
+- [x] `tests/test-wtx-install.sh` Case 68 now asserts merge dry-run emits the required Step 11 dry-run note exactly once.
+
+## Coverage
+
+- Story 1.6 dry-run helper, parse/export, delegated `--dry-run` args, guarded symlink/TOML/hooks/Gradle preview paths, truthful preview ledger values, no direct `install.sh` bypass, new-config E2E, overwrite E2E, merge E2E, no TOML temp leftovers, no hook directory creation, and exact Step 11 note coverage are now covered.
+- API endpoints: 0/0 covered.
+- UI/E2E flows for Story 1.6: 3/3 required dry-run wizard paths covered.
+- Critical dry-run mutation targets asserted absent/unchanged: `wtx.toml`, `.wtx-install-tmp.*`, `.claude/hooks/worktree-*.sh`, prefix `bin/wtx`, and Gradle init script.
+- Critical error/edge cases covered: skipped existing config path preserves optional failure rc, direct `install.sh` bypass static guard, overwrite and merge dry-run preserve existing TOML.
+
+## Validation results
+
+| Suite | Result |
+|-------|--------|
+| `bash -n bin/wtx lib/*.sh scripts/*.sh hooks/*.sh plugins/*.sh` | OK |
+| `bash tests/test-wtx-config.sh` | 26/26 OK |
+| `bash tests/test-wtx-dispatcher.sh` | 22/22 OK |
+| `bash tests/test-wtx-install.sh` | 283/283 OK |
+| `bash tests/test-install.sh` | 25/25 OK |
+| `bash tests/test-worktree-registry.sh` | 19/19 OK |
+
+## Next Steps
+
+- No further Story 1.6 E2E test gaps identified.
+
+---
+
 # Test Automation Summary — Story 1.5: Idempotency — skip / overwrite / merge
 
 **Feature:** Idempotency gate for `wtx install` when `wtx.toml` already exists.
