@@ -405,6 +405,67 @@ _wtx_install_step9_claude_hooks() {
 }
 
 # ---------------------------------------------------------------------------
+# Step 10 — Optional extras
+# ---------------------------------------------------------------------------
+_wtx_install_step10_extras() {
+    local rc=0
+    local gradle_rc=0
+    local prefix="${WTX_INSTALL_PREFIX:-$HOME/.local}"
+    WTX_INSTALL_PREFIX="$prefix"
+    export WTX_INSTALL_PREFIX
+
+    tui_style_box \
+        "Optional extras" \
+        "Gradle worktree-cache init script" \
+        "  Isolates Gradle build caches per worktree."
+
+    if tui_confirm "Install Gradle worktree-cache init script to ~/.gradle/init.d/?"; then
+        local install_args=("bash" "$WTX_ROOT/install.sh" "--gradle")
+        if [[ "${WTX_INSTALL_DRY_RUN:-0}" = "1" ]]; then
+            install_args+=("--dry-run")
+        fi
+
+        wtx_install_write_or_dryrun "would copy: gradle init -> $HOME/.gradle/init.d/worktree-cache.init.gradle.kts" "${install_args[@]}"
+        gradle_rc=$?
+        _WTX_LEDGER_KEYS+=("gradle")
+        if [[ $gradle_rc -eq 0 ]]; then
+            _WTX_LEDGER_VALS+=("done")
+        else
+            _WTX_LEDGER_VALS+=("failed")
+            rc=$gradle_rc
+        fi
+    else
+        _WTX_LEDGER_KEYS+=("gradle")
+        _WTX_LEDGER_VALS+=("skipped")
+    fi
+
+    case ":$PATH:" in
+        *":$WTX_INSTALL_PREFIX/bin:"*)
+            _WTX_LEDGER_KEYS+=("path-hint")
+            _WTX_LEDGER_VALS+=("skipped (already on PATH)")
+            ;;
+        *)
+            if tui_confirm "Show PATH setup hint?" "yes"; then
+                local hint_bin="$WTX_INSTALL_PREFIX/bin"
+                if [[ "$WTX_INSTALL_PREFIX" = "$HOME/.local" ]]; then
+                    hint_bin='$HOME/.local/bin'
+                fi
+                printf '  Add to your shell startup file:\n'
+                printf '    export PATH="%s:$PATH"\n' "$hint_bin"
+                printf '  then restart your shell (or source that file)\n'
+                _WTX_LEDGER_KEYS+=("path-hint")
+                _WTX_LEDGER_VALS+=("shown")
+            else
+                _WTX_LEDGER_KEYS+=("path-hint")
+                _WTX_LEDGER_VALS+=("skipped")
+            fi
+            ;;
+    esac
+
+    return $rc
+}
+
+# ---------------------------------------------------------------------------
 # Main run — wire step sequence (AC: 10)
 # ---------------------------------------------------------------------------
 _wtx_install_run() {
@@ -442,8 +503,8 @@ _wtx_install_run() {
     # Step 9 — Claude Code hooks setup
     _wtx_install_step9_claude_hooks || _run_rc=$?
 
-    # Step 10a/10b — Extras menu (placeholder — Story 1.4)
-    # _wtx_install_step10_extras
+    # Step 10a/10b — Extras menu
+    _wtx_install_step10_extras || _run_rc=$?
 
     # Step 11 — Completion summary + doctor handoff (placeholder — Story 1.7)
     # _wtx_install_step11_summary

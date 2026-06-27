@@ -802,6 +802,380 @@ _wtx_install_step9_claude_hooks() { return 0; }
 _wtx_install_run >/dev/null 2>&1; rc=$?
 assert_eq "run: step9 success tracked-rc returns 0" 0 "$rc"
 
+# ---------------------------------------------------------------------------
+# Story 1.4 QA gap coverage (Cases 35-43): Step 10 extras menu, Gradle
+# delegation, PATH hint behavior, dry-run propagation, and run wiring.
+# ---------------------------------------------------------------------------
+
+# Restore real wizard functions before Step 10 focused tests.
+unset -f _wtx_install_step9_claude_hooks _wtx_install_step10_extras _wtx_install_run
+eval "$wizard_head" 2>/dev/null || true
+tui_style_box() { for l in "$@"; do echo "  $l"; done; }
+
+# -- Case 35: Step 10 Gradle decline returns 0, records skipped, and does not delegate
+tmpdir35="$(mktemp -d)"
+export WTX_ROOT="$REPO_ROOT"
+export WTX_INSTALL_PREFIX="$tmpdir35/prefix"
+WTX_INSTALL_DRY_RUN=0
+PATH="$WTX_INSTALL_PREFIX/bin:/usr/bin:/bin"
+_WTX_LEDGER_KEYS=()
+_WTX_LEDGER_VALS=()
+step10_prompts=""
+step10_calls=0
+tui_confirm() {
+    step10_prompts="${step10_prompts}[$1|${2-__unset__}]"
+    return 1
+}
+wtx_install_write_or_dryrun() {
+    step10_calls=$((step10_calls + 1))
+    return 0
+}
+_wtx_install_step10_extras >/dev/null
+rc=$?
+assert_eq "step10 gradle decline: returns 0" 0 "$rc"
+assert_contains "step10 gradle decline: prompt defaults no" "[Install Gradle worktree-cache init script to ~/.gradle/init.d/?|__unset__]" "$step10_prompts"
+assert_eq "step10 gradle decline: no delegate" 0 "$step10_calls"
+assert_eq "step10 gradle decline: ledger key" "gradle" "${_WTX_LEDGER_KEYS[0]:-}"
+assert_eq "step10 gradle decline: ledger skipped" "skipped" "${_WTX_LEDGER_VALS[0]:-}"
+step10_gradle_count=0
+set +u
+for key in "${_WTX_LEDGER_KEYS[@]}"; do
+    [[ "$key" = "gradle" ]] && step10_gradle_count=$((step10_gradle_count + 1))
+done
+set -u
+assert_eq "step10 gradle decline: exactly one gradle entry" "1" "$step10_gradle_count"
+rm -rf "$tmpdir35"
+
+# -- Case 36: Step 10 Gradle confirm success delegates install.sh --gradle
+tmpdir36="$(mktemp -d)"
+export WTX_INSTALL_PREFIX="$tmpdir36/prefix"
+WTX_INSTALL_DRY_RUN=0
+PATH="$WTX_INSTALL_PREFIX/bin:/usr/bin:/bin"
+_WTX_LEDGER_KEYS=()
+_WTX_LEDGER_VALS=()
+step10_action=""
+step10_args=""
+tui_confirm() { return 0; }
+wtx_install_write_or_dryrun() {
+    step10_action="$1"
+    shift
+    step10_args="$(printf '<%s>' "$@")"
+    return 0
+}
+_wtx_install_step10_extras >/dev/null
+rc=$?
+assert_eq "step10 gradle success: returns 0" 0 "$rc"
+assert_eq "step10 gradle success: action label" "would copy: gradle init -> $HOME/.gradle/init.d/worktree-cache.init.gradle.kts" "$step10_action"
+assert_eq "step10 gradle success: delegated args" "<bash><$REPO_ROOT/install.sh><--gradle>" "$step10_args"
+assert_eq "step10 gradle success: ledger done" "done" "${_WTX_LEDGER_VALS[0]:-}"
+assert_eq "step10 gradle success: path-hint skipped (already on PATH)" "skipped (already on PATH)" "${_WTX_LEDGER_VALS[1]:-}"
+rm -rf "$tmpdir36"
+
+# -- Case 37: Step 10 Gradle failure returns rc and still runs PATH hint
+tmpdir37="$(mktemp -d)"
+export WTX_INSTALL_PREFIX="$tmpdir37/prefix"
+WTX_INSTALL_DRY_RUN=0
+PATH="/usr/bin:/bin"
+_WTX_LEDGER_KEYS=()
+_WTX_LEDGER_VALS=()
+tui_confirm() { return 0; }
+wtx_install_write_or_dryrun() { return 4; }
+step37_out_file="$tmpdir37/out"
+_wtx_install_step10_extras > "$step37_out_file"
+rc=$?
+step37_out="$(cat "$step37_out_file")"
+assert_eq "step10 gradle failure: returns delegate rc" 4 "$rc"
+assert_eq "step10 gradle failure: ledger gradle failed" "failed" "${_WTX_LEDGER_VALS[0]:-}"
+assert_eq "step10 gradle failure: still records path hint" "path-hint" "${_WTX_LEDGER_KEYS[1]:-}"
+assert_eq "step10 gradle failure: path hint shown" "shown" "${_WTX_LEDGER_VALS[1]:-}"
+assert_contains "step10 gradle failure: PATH hint still printed" "export PATH=" "$step37_out"
+rm -rf "$tmpdir37"
+
+# -- Case 38: Step 10 Gradle dry-run appends --dry-run to delegated args
+tmpdir38="$(mktemp -d)"
+export WTX_INSTALL_PREFIX="$tmpdir38/prefix"
+WTX_INSTALL_DRY_RUN=1
+PATH="$WTX_INSTALL_PREFIX/bin:/usr/bin:/bin"
+_WTX_LEDGER_KEYS=()
+_WTX_LEDGER_VALS=()
+step10_args=""
+tui_confirm() { return 0; }
+wtx_install_write_or_dryrun() {
+    shift
+    step10_args="$(printf '<%s>' "$@")"
+    return 0
+}
+_wtx_install_step10_extras >/dev/null
+rc=$?
+assert_eq "step10 dry-run: returns 0" 0 "$rc"
+assert_eq "step10 dry-run: delegated args include dry-run" "<bash><$REPO_ROOT/install.sh><--gradle><--dry-run>" "$step10_args"
+assert_eq "step10 dry-run: path-hint skipped (already on PATH)" "skipped (already on PATH)" "${_WTX_LEDGER_VALS[1]:-}"
+rm -rf "$tmpdir38"
+
+# -- Case 39: Step 10 PATH already on PATH skips prompt and hint output
+tmpdir39="$(mktemp -d)"
+export WTX_INSTALL_PREFIX="$tmpdir39/prefix"
+WTX_INSTALL_DRY_RUN=0
+PATH="/bin:$WTX_INSTALL_PREFIX/bin:/usr/bin"
+_WTX_LEDGER_KEYS=()
+_WTX_LEDGER_VALS=()
+step10_prompts=""
+tui_confirm() {
+    step10_prompts="${step10_prompts}[$1]"
+    return 1
+}
+wtx_install_write_or_dryrun() { return 0; }
+step39_out_file="$tmpdir39/out"
+_wtx_install_step10_extras > "$step39_out_file"
+rc=$?
+step39_out="$(cat "$step39_out_file")"
+assert_eq "step10 path on PATH: returns 0" 0 "$rc"
+case "$step10_prompts" in
+    *"Show PATH setup hint?"*) FAILS=$((FAILS+1)); TOTAL=$((TOTAL+1)); printf 'FAIL  step10 path on PATH: no PATH prompt\n' ;;
+    *) TOTAL=$((TOTAL+1)); printf 'PASS  step10 path on PATH: no PATH prompt\n' ;;
+esac
+case "$step39_out" in
+    *"export PATH="*) FAILS=$((FAILS+1)); TOTAL=$((TOTAL+1)); printf 'FAIL  step10 path on PATH: no hint output\n' ;;
+    *) TOTAL=$((TOTAL+1)); printf 'PASS  step10 path on PATH: no hint output\n' ;;
+esac
+assert_eq "step10 path on PATH: ledger skipped already" "skipped (already on PATH)" "${_WTX_LEDGER_VALS[1]:-}"
+rm -rf "$tmpdir39"
+
+# -- Case 40: Step 10 PATH missing + user declines records skipped and prints no guidance
+tmpdir40="$(mktemp -d)"
+export WTX_INSTALL_PREFIX="$tmpdir40/prefix"
+WTX_INSTALL_DRY_RUN=0
+PATH="/usr/bin:/bin"
+_WTX_LEDGER_KEYS=()
+_WTX_LEDGER_VALS=()
+step10_prompts=""
+tui_confirm() {
+    step10_prompts="${step10_prompts}[$1|${2-__unset__}]"
+    return 1
+}
+wtx_install_write_or_dryrun() { return 0; }
+step40_out_file="$tmpdir40/out"
+_wtx_install_step10_extras > "$step40_out_file"
+rc=$?
+step40_out="$(cat "$step40_out_file")"
+assert_eq "step10 path decline: returns 0" 0 "$rc"
+assert_contains "step10 path decline: prompt defaults yes" "[Show PATH setup hint?|yes]" "$step10_prompts"
+case "$step40_out" in
+    *"export PATH="*) FAILS=$((FAILS+1)); TOTAL=$((TOTAL+1)); printf 'FAIL  step10 path decline: no export guidance\n' ;;
+    *) TOTAL=$((TOTAL+1)); printf 'PASS  step10 path decline: no export guidance\n' ;;
+esac
+assert_eq "step10 path decline: ledger skipped" "skipped" "${_WTX_LEDGER_VALS[1]:-}"
+rm -rf "$tmpdir40"
+
+# -- Case 41: Step 10 PATH missing + default prefix prints $HOME guidance
+tmpdir41="$(mktemp -d)"
+unset WTX_INSTALL_PREFIX
+WTX_INSTALL_DRY_RUN=0
+PATH="/usr/bin:/bin"
+_WTX_LEDGER_KEYS=()
+_WTX_LEDGER_VALS=()
+tui_confirm() {
+    case "$1" in
+        "Install Gradle worktree-cache init script to ~/.gradle/init.d/?") return 1 ;;
+        "Show PATH setup hint?") return 0 ;;
+    esac
+    return 1
+}
+wtx_install_write_or_dryrun() { return 0; }
+step41_out_file="$tmpdir41/out"
+_wtx_install_step10_extras > "$step41_out_file"
+rc=$?
+step41_out="$(cat "$step41_out_file")"
+assert_eq "step10 path default hint: returns 0" 0 "$rc"
+assert_contains "step10 path default hint: prints HOME export" 'export PATH="$HOME/.local/bin:$PATH"' "$step41_out"
+assert_eq "step10 path default hint: ledger shown" "shown" "${_WTX_LEDGER_VALS[1]:-}"
+assert_eq "step10 path default hint: exports fallback prefix" "$HOME/.local" "${WTX_INSTALL_PREFIX:-}"
+rm -rf "$tmpdir41"
+
+# -- Case 42: Step 10 PATH missing + custom prefix prints custom path
+tmpdir42="$(mktemp -d)"
+export WTX_INSTALL_PREFIX="$tmpdir42/custom-prefix"
+WTX_INSTALL_DRY_RUN=0
+PATH="/usr/bin:/bin"
+_WTX_LEDGER_KEYS=()
+_WTX_LEDGER_VALS=()
+tui_confirm() {
+    case "$1" in
+        "Install Gradle worktree-cache init script to ~/.gradle/init.d/?") return 1 ;;
+        "Show PATH setup hint?") return 0 ;;
+    esac
+    return 1
+}
+wtx_install_write_or_dryrun() { return 0; }
+step42_out_file="$tmpdir42/out"
+_wtx_install_step10_extras > "$step42_out_file"
+rc=$?
+step42_out="$(cat "$step42_out_file")"
+assert_eq "step10 path custom hint: returns 0" 0 "$rc"
+assert_contains "step10 path custom hint: prints custom export" "export PATH=\"$WTX_INSTALL_PREFIX/bin:\$PATH\"" "$step42_out"
+rm -rf "$tmpdir42"
+
+# -- Case 43: _wtx_install_run wires Step 10 after Step 9 and tracks optional rc
+_wtx_install_preflight() {
+    _WTX_LEDGER_KEYS=()
+    _WTX_LEDGER_VALS=()
+    WTX_INSTALL_DRY_RUN=0
+    WORKSPACE_ROOT="/tmp/wtx-run-test-14"
+    export WTX_INSTALL_DRY_RUN WORKSPACE_ROOT
+    return 0
+}
+_wtx_install_step_banner() { return 0; }
+_wtx_install_step2_binary() { return 0; }
+_wtx_install_steps3_7_config() { return 0; }
+_wtx_install_step8_hook() { return 0; }
+wtx_install_write_or_dryrun() { return 0; }
+_wtx_install_step9_claude_hooks() { return 0; }
+_wtx_install_step10_extras() { return 6; }
+_wtx_install_run >/dev/null 2>&1; rc=$?
+assert_eq "run: step10 failure returns tracked rc" 6 "$rc"
+
+_wtx_install_step9_claude_hooks() { return 8; }
+_wtx_install_step10_extras() { return 0; }
+_wtx_install_run >/dev/null 2>&1; rc=$?
+assert_eq "run: step9 failure still returns tracked rc" 8 "$rc"
+
+# ---------------------------------------------------------------------------
+# Story 1.4 E2E coverage (Cases 44-45): execute the real wizard with a gum
+# shim so Step 10 is reached through the public script path.
+# ---------------------------------------------------------------------------
+
+_write_install_gum_shim() {
+    local shim_dir="$1"
+    mkdir -p "$shim_dir"
+    cat > "$shim_dir/gum" <<'GUMEOF'
+#!/bin/bash
+cmd="$1"
+shift
+
+case "$cmd" in
+    input)
+        prompt=""
+        value=""
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --prompt) prompt="$2"; shift 2 ;;
+                --value) value="$2"; shift 2 ;;
+                --placeholder) shift 2 ;;
+                *) shift ;;
+            esac
+        done
+        case "$prompt" in
+            "Install prefix "*) printf '%s\n' "${WTX_GUM_INSTALL_PREFIX:-$value}" ;;
+            "Forge org / owner slug "*) printf '%s\n' "${WTX_GUM_FORGE_ORG:-example-org}" ;;
+            "Known project dirs "*) printf '%s\n' "${WTX_GUM_PROJECTS:-}" ;;
+            "Default base branch "*) printf '%s\n' "${WTX_GUM_BASE_BRANCH:-$value}" ;;
+            "Default branch prefix "*) printf '%s\n' "${WTX_GUM_BRANCH_PREFIX:-$value}" ;;
+            "Repo name for Jira mapping "*) printf '\n' ;;
+            *) printf '%s\n' "$value" ;;
+        esac
+        ;;
+    choose)
+        header=""
+        opts=()
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --header) header="$2"; shift 2 ;;
+                --selected) shift 2 ;;
+                *) opts+=("$1"); shift ;;
+            esac
+        done
+        case "$header" in
+            "Forge type") printf 'github\n' ;;
+            "Detection markers") printf '.git (any git repo — default)\n' ;;
+            "Setup hook (runs after worktree create)") printf 'None\n' ;;
+            *) printf '%s\n' "${opts[0]:-}" ;;
+        esac
+        ;;
+    confirm)
+        prompt="$1"
+        case "$prompt" in
+            "Self-hosted instance?") exit 1 ;;
+            "Add another Jira mapping?") exit 1 ;;
+            "Install Claude Code hooks?") [[ "${WTX_GUM_HOOKS:-yes}" = "yes" ]] ;;
+            "Install Gradle worktree-cache init script to ~/.gradle/init.d/?") [[ "${WTX_GUM_GRADLE:-no}" = "yes" ]] ;;
+            "Show PATH setup hint?") [[ "${WTX_GUM_PATH_HINT:-yes}" = "yes" ]] ;;
+            *) exit 1 ;;
+        esac
+        ;;
+    style)
+        cat
+        ;;
+    spin)
+        while [[ $# -gt 0 && "$1" != "--" ]]; do shift; done
+        [[ "${1:-}" = "--" ]] && shift
+        "$@"
+        ;;
+    *)
+        exit 1
+        ;;
+esac
+GUMEOF
+    chmod +x "$shim_dir/gum"
+}
+
+# -- Case 44: full wizard dry-run reaches Step 10 and honors default-no Gradle/default-yes PATH hint
+tmpdir44="$(mktemp -d)"
+mkdir -p "$tmpdir44/home" "$tmpdir44/repo"
+( cd "$tmpdir44/repo" && git init -q )
+_write_install_gum_shim "$tmpdir44/bin"
+out44="$(
+    cd "$tmpdir44/repo" && \
+    HOME="$tmpdir44/home" \
+    PATH="$tmpdir44/bin:/usr/bin:/bin" \
+    WTX_ROOT="$REPO_ROOT" \
+    WORKSPACE_ROOT="$tmpdir44/repo" \
+    WTX_GUM_INSTALL_PREFIX="$tmpdir44/prefix" \
+    WTX_GUM_GRADLE=no \
+    WTX_GUM_PATH_HINT=yes \
+    bash "$WIZARD" --dry-run 2>&1
+)"
+rc=$?
+assert_eq "wizard e2e dry-run: exits 0" 0 "$rc"
+assert_contains "wizard e2e dry-run: reaches optional extras" "Optional extras" "$out44"
+assert_contains "wizard e2e dry-run: shows Gradle one-liner" "Isolates Gradle build caches per worktree." "$out44"
+case "$out44" in
+    *"[dry-run] would copy: gradle init"*) FAILS=$((FAILS+1)); TOTAL=$((TOTAL+1)); printf 'FAIL  wizard e2e dry-run: default-no Gradle skips delegate\n' ;;
+    *) TOTAL=$((TOTAL+1)); printf 'PASS  wizard e2e dry-run: default-no Gradle skips delegate\n' ;;
+esac
+assert_contains "wizard e2e dry-run: default-yes PATH hint shown" "export PATH=\"$tmpdir44/prefix/bin:\$PATH\"" "$out44"
+[[ ! -e "$tmpdir44/repo/wtx.toml" ]]; assert_ok "wizard e2e dry-run: no TOML write" $?
+[[ ! -e "$tmpdir44/home/.gradle/init.d/worktree-cache.init.gradle.kts" ]]; assert_ok "wizard e2e dry-run: no Gradle file write" $?
+rm -rf "$tmpdir44"
+
+# -- Case 45: full wizard real run confirms Gradle and delegates to install.sh using temporary HOME
+tmpdir45="$(mktemp -d)"
+mkdir -p "$tmpdir45/home" "$tmpdir45/repo" "$tmpdir45/prefix/bin"
+( cd "$tmpdir45/repo" && git init -q )
+_write_install_gum_shim "$tmpdir45/bin"
+ln -s "$REPO_ROOT/bin/wtx" "$tmpdir45/prefix/bin/wtx"
+out45="$(
+    cd "$tmpdir45/repo" && \
+    HOME="$tmpdir45/home" \
+    PATH="$tmpdir45/bin:$tmpdir45/prefix/bin:/usr/bin:/bin" \
+    WTX_ROOT="$REPO_ROOT" \
+    WORKSPACE_ROOT="$tmpdir45/repo" \
+    WTX_INSTALL_PREFIX="$tmpdir45/prefix" \
+    WTX_GUM_INSTALL_PREFIX="$tmpdir45/prefix" \
+    WTX_GUM_HOOKS=no \
+    WTX_GUM_GRADLE=yes \
+    bash "$WIZARD" 2>&1
+)"
+rc=$?
+assert_eq "wizard e2e gradle: exits 0" 0 "$rc"
+assert_contains "wizard e2e gradle: install.sh reports copy" "copied worktree-cache.init.gradle.kts" "$out45"
+[[ -f "$tmpdir45/home/.gradle/init.d/worktree-cache.init.gradle.kts" ]]; assert_ok "wizard e2e gradle: file installed under temp HOME" $?
+[[ -f "$tmpdir45/repo/wtx.toml" ]]; assert_ok "wizard e2e gradle: TOML written" $?
+case "$out45" in
+    *"Add to your shell startup file:"*) FAILS=$((FAILS+1)); TOTAL=$((TOTAL+1)); printf 'FAIL  wizard e2e gradle: already-on-PATH prints no wizard PATH hint\n' ;;
+    *) TOTAL=$((TOTAL+1)); printf 'PASS  wizard e2e gradle: already-on-PATH prints no guidance\n' ;;
+esac
+rm -rf "$tmpdir45"
+
 echo
 if [[ $FAILS -eq 0 ]]; then
     printf '%d/%d passed\n' "$TOTAL" "$TOTAL"

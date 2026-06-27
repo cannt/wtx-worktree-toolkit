@@ -1,3 +1,35 @@
+# Test Automation Summary
+
+## Generated Tests
+
+### API Tests
+- [x] Not applicable - Story 1.4 is a shell installer wizard flow with no API endpoint.
+
+### E2E Tests
+- [x] `tests/test-wtx-install.sh` - Case 44: full wizard dry-run reaches Step 10, shows the Gradle one-line explanation, honors default-no Gradle, shows the default-yes PATH hint, and writes no files.
+- [x] `tests/test-wtx-install.sh` - Case 45: full wizard real run confirms Gradle, delegates through `install.sh --gradle`, installs the Gradle init file under a temporary `HOME`, writes `wtx.toml`, and suppresses the wizard PATH hint when the prefix is already on `PATH`.
+
+## Coverage
+
+- API endpoints: 0/0 covered.
+- UI/E2E flows for Story 1.4: 2/2 added.
+- Existing focused Step 10 shell cases retained: Gradle decline/success/failure/dry-run, PATH already present, PATH decline/show with default and custom prefixes, and Step 9/10 `_run_rc` wiring.
+
+## Validation
+
+- [x] `bash -n bin/wtx lib/*.sh scripts/*.sh hooks/*.sh plugins/*.sh`
+- [x] `bash tests/test-wtx-config.sh`
+- [x] `bash tests/test-wtx-dispatcher.sh`
+- [x] `bash tests/test-wtx-install.sh`
+- [x] `bash tests/test-install.sh`
+- [x] `bash tests/test-worktree-registry.sh`
+
+## Next Steps
+
+- No further Story 1.4 E2E gaps identified.
+
+---
+
 # Test Automation Summary — Story 1.3: Claude Code hooks setup (Step 9)
 
 Generated: 2026-06-27
