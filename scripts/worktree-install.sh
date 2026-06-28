@@ -216,10 +216,10 @@ _wtx_install_steps3_7_config() {
     else
         forge_type="$(tui_choose "Forge type" "github" "gitlab" "bitbucket")"
     fi
-    forge_org="$(tui_input "Forge org / owner slug" "$_pf_forge_org")"
+    forge_org="$(_wtx_trim "$(tui_input "Forge org / owner slug" "$_pf_forge_org")")"
     forge_base_url=""
     if tui_confirm "Self-hosted instance?" "${_pf_forge_base_url:+yes}"; then
-        forge_base_url="$(tui_input "Base URL" "$_pf_forge_base_url")"
+        forge_base_url="$(_wtx_trim "$(tui_input "Base URL" "$_pf_forge_base_url")")"
     fi
 
     # Step 4 — Project dirs
@@ -266,8 +266,8 @@ _wtx_install_steps3_7_config() {
     esac
 
     # Step 6 — Branch defaults
-    base_branch="$(tui_input "Default base branch" "$_pf_base_branch")"
-    branch_prefix="$(tui_input "Default branch prefix" "$_pf_branch_prefix")"
+    base_branch="$(_wtx_trim "$(tui_input "Default base branch" "$_pf_base_branch")")"
+    branch_prefix="$(_wtx_trim "$(tui_input "Default branch prefix" "$_pf_branch_prefix")")"
 
     # Step 7 — Jira project key mapping (parallel indexed arrays, bash 3.2)
     _WTX_JIRA_REPOS=()
@@ -277,10 +277,10 @@ _wtx_install_steps3_7_config() {
     fi
     while true; do
         local jira_repo
-        jira_repo="$(tui_input "Repo name for Jira mapping (blank to skip)")"
+        jira_repo="$(_wtx_trim "$(tui_input "Repo name for Jira mapping (blank to skip)")")"
         [[ -z "$jira_repo" ]] && break
         local jira_key
-        jira_key="$(tui_input "Jira project key for \"$jira_repo\"")"
+        jira_key="$(_wtx_trim "$(tui_input "Jira project key for \"$jira_repo\"")")"
         _WTX_JIRA_REPOS+=("$jira_repo")
         _WTX_JIRA_KEYS+=("$jira_key")
         tui_confirm "Add another Jira mapping?" || break

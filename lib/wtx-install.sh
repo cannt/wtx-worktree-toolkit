@@ -15,6 +15,16 @@ _wtx_toml_escape() {
     printf '%s' "$s"
 }
 
+# Strip leading and trailing whitespace from a scalar. Wizard prompts pass user
+# input through this before it is stored, so a stray space (e.g. "myorg ") never
+# lands in wtx.toml and corrupts forge URLs / project lookups.
+_wtx_trim() {
+    local s="$1"
+    s="${s#"${s%%[![:space:]]*}"}"
+    s="${s%"${s##*[![:space:]]}"}"
+    printf '%s' "$s"
+}
+
 # Convert a comma-separated input to a TOML array literal. Whitespace around
 # items is trimmed. Globs are preserved verbatim by disabling pathname expansion.
 _wtx_csv_to_toml_array() {

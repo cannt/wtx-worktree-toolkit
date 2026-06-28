@@ -51,7 +51,7 @@ assert_ok() {
 source "$LIB"
 source "$LIB"
 assert_eq "lib guard: set" 1 "${_WTX_INSTALL_LIB_LOADED:-0}"
-for fn in _wtx_toml_escape _wtx_csv_to_toml_array wtx_install_discover_plugins wtx_install_write_or_dryrun; do
+for fn in _wtx_toml_escape _wtx_trim _wtx_csv_to_toml_array wtx_install_discover_plugins wtx_install_write_or_dryrun; do
     if command -v "$fn" >/dev/null 2>&1; then
         TOTAL=$((TOTAL + 1)); printf 'PASS  lib defines %s\n' "$fn"
     else
@@ -71,6 +71,15 @@ esac
 set +f
 assert_eq "csv helper: preserves existing noglob" 1 "$noglob_state"
 assert_eq "csv helper: preserves output with noglob" '["a", "*", "c"]' "$out"
+
+# -- trim helper: scalar inputs must not carry stray whitespace into wtx.toml
+assert_eq "trim: trailing space"   "myorg"        "$(_wtx_trim "myorg ")"
+assert_eq "trim: leading space"    "myorg"        "$(_wtx_trim " myorg")"
+assert_eq "trim: both sides"       "myorg"        "$(_wtx_trim "  myorg  ")"
+assert_eq "trim: tab + space"      "PROJ"         "$(_wtx_trim $'\t PROJ \t')"
+assert_eq "trim: inner space kept" "bt eng"       "$(_wtx_trim "  bt eng  ")"
+assert_eq "trim: all whitespace"   ""             "$(_wtx_trim "   ")"
+assert_eq "trim: empty"            ""             "$(_wtx_trim "")"
 
 # -- Case 2: write chokepoint executes command and propagates exit code
 tmpdir="$(mktemp -d)"
