@@ -29,6 +29,21 @@ _wtx_update_read_version() {
     printf '%s' "${v:-0.1.0-dev}"
 }
 
+# Echo the upstream ref (e.g. "origin/main") for $WTX_ROOT's current branch, or
+# nothing if the branch has no tracking configured.
+_wtx_update_upstream() {
+    git -C "$WTX_ROOT" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null
+}
+
+# Build an actionable "no upstream" message naming the current branch.
+_wtx_update_no_upstream_msg() {
+    local branch
+    branch="$(git -C "$WTX_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+    branch="${branch:-main}"
+    printf 'no upstream tracking branch — set it with: git branch --set-upstream-to=origin/%s %s' \
+        "$branch" "$branch"
+}
+
 # ---------------------------------------------------------------------------
 # Layer 1 — toolkit checkout. Sets:
 #   _WTX_UPDATE_TOOLKIT_STATUS  updated | up-to-date | skipped | failed | available
@@ -63,13 +78,24 @@ wtx_update_toolkit() {
         return 0
     fi
 
+    # No upstream tracking → can't compare or pull. Skip gracefully (with a fix
+    # hint) rather than letting `git pull --ff-only` fail loudly. Keeps the apply
+    # path consistent with --check, and matches the codebase's graceful posture.
+    if [[ -z "$(_wtx_update_upstream)" ]]; then
+        _WTX_UPDATE_TOOLKIT_STATUS="skipped"
+        _WTX_UPDATE_TOOLKIT_MSG="$(_wtx_update_no_upstream_msg)"
+        return 0
+    fi
+
     if [[ $dry_run -eq 1 ]]; then
         git -C "$WTX_ROOT" fetch --quiet 2>/dev/null
         local behind=""
         behind="$(git -C "$WTX_ROOT" rev-list --count 'HEAD..@{u}' 2>/dev/null)"
         if [[ -z "$behind" ]]; then
-            _WTX_UPDATE_TOOLKIT_STATUS="up-to-date"
-            _WTX_UPDATE_TOOLKIT_MSG="no upstream tracking branch to compare"
+            # Upstream existed above but the count couldn't be computed (e.g. a
+            # fetch hiccup); report a skip rather than a false "up to date".
+            _WTX_UPDATE_TOOLKIT_STATUS="skipped"
+            _WTX_UPDATE_TOOLKIT_MSG="could not compare against upstream — try again"
         elif [[ "$behind" -gt 0 ]]; then
             _WTX_UPDATE_TOOLKIT_STATUS="available"
             _WTX_UPDATE_TOOLKIT_MSG="$behind commit(s) available — run 'wtx update' to apply"

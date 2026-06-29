@@ -104,6 +104,19 @@ WTX_ROOT="$clone" wtx_update_toolkit; rc=$?
 assert_eq "toolkit pull again: up-to-date" "up-to-date" "$_WTX_UPDATE_TOOLKIT_STATUS"
 rm -rf "$(dirname "$origin")" "$(dirname "$clone")"
 
+# -- Case 5b: clean checkout with NO upstream tracking → graceful skip (not failed)
+noup="$(mktemp -d)"
+( cd "$noup" && _git init -q && printf '0.4.1\n' > VERSION && echo x > a && _git add . && _git commit -qm init )
+WTX_ROOT="$noup" wtx_update_toolkit; rc=$?
+assert_eq "no-upstream apply: rc 0" 0 "$rc"
+assert_eq "no-upstream apply: status skipped" "skipped" "$_WTX_UPDATE_TOOLKIT_STATUS"
+assert_contains "no-upstream apply: actionable hint" "set-upstream-to=origin/" "$_WTX_UPDATE_TOOLKIT_MSG"
+WTX_ROOT="$noup" wtx_update_toolkit --dry-run; rc=$?
+assert_eq "no-upstream check: rc 0" 0 "$rc"
+assert_eq "no-upstream check: status skipped" "skipped" "$_WTX_UPDATE_TOOLKIT_STATUS"
+assert_contains "no-upstream check: same hint" "set-upstream-to=origin/" "$_WTX_UPDATE_TOOLKIT_MSG"
+rm -rf "$noup"
+
 # -- Case 6: hooks — none installed → status none
 wsnone="$(mktemp -d)"
 WTX_ROOT="$REPO_ROOT" WORKSPACE_ROOT="$wsnone" wtx_update_hooks; rc=$?
