@@ -1,0 +1,34 @@
+{
+  "name": "wtx-toolkit",
+  "version": "0.3.0",
+  "description": "One-command installer for wtx — a portable git worktree management toolkit. Wraps the bash bootstrap so `npx wtx-toolkit install` works from anywhere.",
+  "bin": {
+    "wtx-toolkit": "bin/wtx-toolkit.js"
+  },
+  "files": [
+    "bin/",
+    "bootstrap.sh"
+  ],
+  "scripts": {
+    "prepack": "node -e \"require('fs').copyFileSync('../bootstrap.sh','bootstrap.sh')\""
+  },
+  "keywords": [
+    "git",
+    "worktree",
+    "cli",
+    "wtx",
+    "installer"
+  ],
+  "engines": {
+    "node": ">=14"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cannt/wtx-worktree-toolkit.git"
+  },
+  "homepage": "https://github.com/cannt/wtx-worktree-toolkit#readme",
+  "bugs": {
+    "url": "https://github.com/cannt/wtx-worktree-toolkit/issues"
+  }
+}

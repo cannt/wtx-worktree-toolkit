@@ -12,6 +12,7 @@
 #   done [args...]      Finalise + clean up a worktree
 #   status [args...]    Worktree dashboard
 #   install [args...]   Interactive installer wizard
+#   update [args...]    Update the toolkit checkout + per-project artifacts
 #   init                Interactive wtx.toml generator
 #   doctor              Dependency + install invariant check
 #   version             Print wtx version
@@ -42,6 +43,8 @@ unset _wtx_self _wtx_link
 
 # shellcheck source=../lib/wtx-install.sh disable=SC1091
 source "$WTX_ROOT/lib/wtx-install.sh"
+# shellcheck source=../lib/wtx-update.sh disable=SC1091
+source "$WTX_ROOT/lib/wtx-update.sh"
 
 # --- WORKSPACE_ROOT resolution ------------------------------------------------
 # Prefer the main repo's path even when invoked from inside a linked worktree:
@@ -100,6 +103,8 @@ COMMANDS:
   done [args]     Finalise, push, open PR, and clean up a worktree
   status [args]   Dashboard: list, manage, rebase worktrees
   install [args]  Run the interactive installer wizard
+  update [args]   Update the toolkit checkout + refresh project artifacts
+                  (--check preview, --toolkit-only skip per-project refresh)
   init            Generate wtx.toml in the current workspace
   doctor          Check dependencies and install invariants
   version         Print wtx version
@@ -167,6 +172,11 @@ _wtx_doctor() {
     echo "Paths:"
     echo "  WTX_ROOT       = $WTX_ROOT"
     echo "  WORKSPACE_ROOT = $WORKSPACE_ROOT"
+    if git -C "$WTX_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+        echo "  TOOLKIT GIT    = yes ('wtx update' can self-update)"
+    else
+        echo "  TOOLKIT GIT    = no (not a git checkout — 'wtx update' will skip the toolkit)"
+    fi
     if [[ -f "$WTX_ROOT/lib/wtx-config.sh" ]]; then
         # shellcheck source=../lib/wtx-config.sh disable=SC1091
         source "$WTX_ROOT/lib/wtx-config.sh" 2>/dev/null || true
@@ -187,6 +197,16 @@ _wtx_doctor() {
     fi
     echo "All required dependencies and install files present."
     return 0
+}
+
+# --- Update -------------------------------------------------------------------
+
+_wtx_update() {
+    # Best-effort: render the summary through gum/tui when available. Harmless
+    # (and the report falls back to plain text) when the lib is missing.
+    # shellcheck source=../lib/worktree-tui.sh disable=SC1091
+    source "$WTX_ROOT/lib/worktree-tui.sh" 2>/dev/null || true
+    wtx_update_run "$@"
 }
 
 # --- Init ---------------------------------------------------------------------
@@ -327,6 +347,9 @@ case "$cmd" in
         ;;
     install)
         _wtx_exec_script "worktree-install.sh" "$@"
+        ;;
+    update)
+        _wtx_update "$@"
         ;;
     init)
         _wtx_init "$@"

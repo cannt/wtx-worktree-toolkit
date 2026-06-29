@@ -29,12 +29,35 @@ Run `wtx doctor` after install to see what's present.
 
 ## Install
 
+### Quick install (one-liner)
+
+Run this from anywhere — it clones the toolkit to a stable home
+(`~/.local/share/wtx`), links `wtx` onto your `PATH`, and, if you run it inside a
+git repo, offers to set up that project:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/cannt/wtx-worktree-toolkit/main/bootstrap.sh | bash
+```
+
+Prefer npm? This is the same thing, the way bmad ships `npx bmad-method install`:
+
+```bash
+npx wtx-toolkit install
+```
+
+Both accept flags (`--prefix`, `--ref`, `--no-project`, `--dry-run`); the curl
+form takes them after `bash -s --`, e.g.
+`curl -fsSL …/bootstrap.sh | bash -s -- --dry-run`. Re-running either is safe —
+it updates an existing install in place.
+
+### From source
+
 `wtx` is a symlink-based install: the repo tree stays in place and
-`bin/wtx` is linked onto your `PATH`. Upgrading is just `git pull`.
+`bin/wtx` is linked onto your `PATH`. Upgrading is `wtx update` (or `git pull`).
 
 ```bash
 # Clone somewhere permanent
-git clone https://github.com/your-org/wtx.git ~/.local/share/wtx
+git clone https://github.com/cannt/wtx-worktree-toolkit.git ~/.local/share/wtx
 cd ~/.local/share/wtx
 
 # Install (default prefix: ~/.local — creates ~/.local/bin/wtx)
@@ -67,6 +90,22 @@ Then verify:
 ```bash
 wtx doctor
 ```
+
+### Updating
+
+Once installed, keep wtx current with:
+
+```bash
+wtx update              # update the toolkit + refresh this project's artifacts
+wtx update --check      # preview what would change, touch nothing
+wtx update --toolkit-only   # only update the checkout, skip per-project refresh
+```
+
+`wtx update` runs `git pull --ff-only` in the toolkit checkout (reporting the
+version change), then re-copies the Claude Code hooks if this workspace uses them
+and flags any new `wtx.toml` keys worth adopting via `wtx install`. It refuses to
+touch a checkout with local changes, and cleanly skips the toolkit step if wtx was
+installed from a zip rather than a git clone.
 
 ## Quickstart
 
@@ -133,6 +172,8 @@ wtx help
 | `start` | Create a worktree. Interactive by default; accepts a Jira ticket or free-form name. |
 | `done` | Push, open PR, remove the worktree and prune the branch. |
 | `status` | Dashboard across all known projects. Interactive menu (no args) or table view (project dir). |
+| `install` | Interactive installer wizard (binary symlink, `wtx.toml`, hooks, extras). |
+| `update` | Update the toolkit checkout and refresh per-project artifacts. `--check` previews; `--toolkit-only` skips the per-project refresh. |
 | `init` | Interactive `wtx.toml` generator. Writes to `$WORKSPACE_ROOT/wtx.toml`. |
 | `doctor` | Check required/optional dependencies and install invariants. |
 | `version` | Print the wtx version. |

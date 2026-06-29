@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-- Syntax-check all shell sources: `bash -n bin/wtx lib/*.sh scripts/*.sh hooks/*.sh plugins/*.sh`
+- Syntax-check all shell sources: `bash -n bin/wtx lib/*.sh scripts/*.sh hooks/*.sh plugins/*.sh bootstrap.sh install.sh`
 - Run config loader tests: `bash tests/test-wtx-config.sh`
 - Run dispatcher tests: `bash tests/test-wtx-dispatcher.sh`
 - Run registry helper tests: `bash tests/test-worktree-registry.sh`
@@ -16,7 +16,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Print version: `bin/wtx version`
 - Generate a `wtx.toml` interactively in the current git workspace: `bin/wtx init`
 
-There is no package.json, Makefile, or CI — validation is shell-only.
+Validation is shell-only — no Makefile or CI. The one `package.json` lives under
+`npm/` and is just a thin `npx wtx-toolkit` wrapper around `bootstrap.sh` (no build
+step, no runtime deps); the toolkit itself stays pure bash.
 
 ## Architecture
 
@@ -27,7 +29,7 @@ There is no package.json, Makefile, or CI — validation is shell-only.
 1. **Resolves `WTX_ROOT`** by walking symlinks from `BASH_SOURCE[0]` without using `readlink -f` (macOS-safe). Exports it so child scripts source libs via `$WTX_ROOT/lib/...` instead of relative paths.
 2. **Resolves `WORKSPACE_ROOT`** using `git rev-parse --git-common-dir`, not `--show-toplevel`. This is critical: when invoked from inside a linked worktree, `--show-toplevel` returns the worktree path, which breaks registry lookups. Every `scripts/worktree-*.sh` script repeats this same resolution as a fallback when run directly (without the dispatcher), so keep the two in sync.
 
-Subcommands `start`/`done`/`status` `exec` into `scripts/worktree-*.sh`; `init`/`doctor`/`version` are implemented inline in `bin/wtx`.
+Subcommands `start`/`done`/`status`/`install` `exec` into `scripts/worktree-*.sh`; `init`/`doctor`/`version`/`update` are implemented inline in `bin/wtx`. `update` sources `lib/wtx-update.sh` and runs `wtx_update_run` (toolkit `git pull --ff-only` + per-project hook/`wtx.toml` refresh). `bootstrap.sh` at the repo root is the standalone `curl … | bash` entry point (clone-or-update the toolkit home, run `install.sh`, then optionally the per-project wizard); the `npm/` wrapper just shells out to it.
 
 ### Config layer (`lib/wtx-config.sh`)
 

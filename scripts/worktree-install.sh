@@ -45,6 +45,8 @@ _wtx_install_source_libs() {
     source "$WTX_ROOT/lib/wtx-install.sh"
     # shellcheck source=../lib/wtx-config.sh disable=SC1091
     source "$WTX_ROOT/lib/wtx-config.sh" 2>/dev/null || true
+    # shellcheck source=../lib/wtx-update.sh disable=SC1091
+    source "$WTX_ROOT/lib/wtx-update.sh" 2>/dev/null || true
     # shellcheck source=../lib/worktree-tui.sh disable=SC1091
     source "$WTX_ROOT/lib/worktree-tui.sh" 2>/dev/null || {
         tui_confirm() { local r; read -r -p "$1 [y/N] " r < /dev/tty; [[ "$r" =~ ^[Yy]$ ]]; }
@@ -559,10 +561,32 @@ _wtx_install_step0_idempotency() {
     _WTX_INSTALL_MODE="overwrite"
     [[ ! -f "$WORKSPACE_ROOT/wtx.toml" ]] && return 0
 
+    # Re-running on an already-installed setup (binary on PATH points at this
+    # checkout + config exists) should be able to just *update* — same ergonomics
+    # as re-running `npx bmad-method install`. Offer it as the first choice.
+    local offer_update=0 resolved
+    if command -v wtx_update_run >/dev/null 2>&1 && command -v wtx >/dev/null 2>&1; then
+        resolved="$(command -v wtx)"
+        while [[ -L "$resolved" ]]; do
+            local lnk
+            lnk="$(readlink "$resolved")"
+            if [[ "$lnk" = /* ]]; then
+                resolved="$lnk"
+            else
+                resolved="$(cd "$(dirname "$resolved")" && pwd)/$lnk"
+            fi
+        done
+        [[ "$resolved" = "$WTX_ROOT/bin/wtx" ]] && offer_update=1
+    fi
+
     tui_style_box \
         "wtx.toml already exists" \
         "  $WORKSPACE_ROOT/wtx.toml"
-    _WTX_INSTALL_MODE="$(tui_choose "How do you want to proceed?" "skip" "overwrite" "merge")"
+    if [[ $offer_update -eq 1 ]]; then
+        _WTX_INSTALL_MODE="$(tui_choose "How do you want to proceed?" "update" "skip" "overwrite" "merge")"
+    else
+        _WTX_INSTALL_MODE="$(tui_choose "How do you want to proceed?" "skip" "overwrite" "merge")"
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -605,6 +629,15 @@ _wtx_install_run() {
     _wtx_install_preflight "$@" || return $?
 
     _wtx_install_step0_idempotency || return $?
+
+    if [[ "${_WTX_INSTALL_MODE:-overwrite}" = "update" ]]; then
+        if [[ "${WTX_INSTALL_DRY_RUN:-0}" = "1" ]]; then
+            wtx_update_run --check
+        else
+            wtx_update_run
+        fi
+        return $?
+    fi
 
     if [[ "${_WTX_INSTALL_MODE:-overwrite}" = "skip" ]]; then
         _WTX_LEDGER_KEYS+=("config")

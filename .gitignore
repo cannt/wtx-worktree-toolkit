@@ -26,6 +26,11 @@ wtx.local.toml
 *.secret
 secrets.*
 
+# npm wrapper build artifact — bootstrap.sh is copied in by `prepack` at publish
+# time from the repo root; never track the copy.
+npm/bootstrap.sh
+npm/node_modules/
+
 # graphify knowledge-graph artifacts — generated locally, rebuilt on commit by
 # the git post-commit hook. Not part of the wtx tool; kept out of git and iCloud.
 graphify-out/
