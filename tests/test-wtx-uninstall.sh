@@ -92,6 +92,28 @@ out="$(XDG_DATA_HOME="$parent" WTX_ROOT="$parent/wtx" WORKSPACE_ROOT="$(mktemp -
 assert_contains "managed dry-run: announces toolkit removal" "would remove toolkit checkout $parent/wtx" "$out"
 rm -rf "$parent"
 
+# -- Case: active worktrees are reported (non-destructively) and left intact
+_git() { git -c init.defaultBranch=main -c user.email=t@t -c user.name=t -c commit.gpgsign=false "$@"; }
+wsroot="$(mktemp -d)/ws"; mkdir -p "$wsroot"
+( cd "$wsroot" && _git init -q && echo a > f && _git add f && _git commit -qm init )
+wtpath="$(mktemp -d)/feature-wt"
+_git -C "$wsroot" worktree add -q "$wtpath" -b feature >/dev/null 2>&1
+out="$(WTX_ROOT="$REPO_ROOT" WORKSPACE_ROOT="$wsroot" wtx_uninstall_run --dry-run --prefix "$(mktemp -d)" 2>&1)"
+assert_contains "worktrees: reminder shown" "1 active worktree(s) remain" "$out"
+assert_contains "worktrees: suggests git worktree remove" "git worktree remove" "$out"
+[[ -d "$wtpath" ]]; assert_eq "worktrees: left intact" 0 "$?"
+rm -rf "$wsroot" "$(dirname "$wtpath")"
+
+# A clean repo with no linked worktrees → no reminder.
+plain="$(mktemp -d)/plain"; mkdir -p "$plain"
+( cd "$plain" && _git init -q && echo a > f && _git add f && _git commit -qm init )
+out="$(WTX_ROOT="$REPO_ROOT" WORKSPACE_ROOT="$plain" wtx_uninstall_run --dry-run --prefix "$(mktemp -d)" 2>&1)"
+case "$out" in
+    *"worktree(s) remain"*) FAILS=$((FAILS+1)); TOTAL=$((TOTAL+1)); printf 'FAIL  worktrees: no reminder when none\n' ;;
+    *)                      TOTAL=$((TOTAL+1)); printf 'PASS  worktrees: no reminder when none\n' ;;
+esac
+rm -rf "$plain"
+
 # -- Case: syntax
 bash -n "$LIB"; assert_eq "lib syntax: bash -n" 0 "$?"
 

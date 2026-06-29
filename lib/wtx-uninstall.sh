@@ -133,6 +133,20 @@ wtx_uninstall_run() {
         printf '    (not a bootstrap-managed home — remove manually if you want it gone)\n'
     fi
 
+    # --- Active worktrees: user work, never removed — just remind --------------
+    local wt_count=0
+    if git -C "$WORKSPACE_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+        wt_count="$(git -C "$WORKSPACE_ROOT" worktree list --porcelain 2>/dev/null | grep -c '^worktree ')"
+        # Exclude the main checkout itself.
+        [[ "$wt_count" -gt 0 ]] && wt_count=$((wt_count - 1))
+    fi
+    if [[ "$wt_count" -gt 0 ]]; then
+        printf '\n  note: %d active worktree(s) remain — uninstall does not remove them.\n' "$wt_count"
+        printf '        use `git worktree remove <path>` (or `wtx done` before uninstalling).\n'
+        local reg="$WORKSPACE_ROOT/.claude/worktree-registry.md"
+        [[ -f "$reg" ]] && printf '        tracked in %s\n' "$reg"
+    fi
+
     # --- Always-kept config ----------------------------------------------------
     if [[ -f "$WORKSPACE_ROOT/wtx.toml" ]]; then
         printf '\n  wtx.toml left in place: %s\n' "$WORKSPACE_ROOT/wtx.toml"
