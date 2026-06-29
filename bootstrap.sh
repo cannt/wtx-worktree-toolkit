@@ -25,6 +25,7 @@
 #   --ref REF        override WTX_REF
 #   --prefix PATH    override WTX_PREFIX
 #   --no-project     skip the per-project `wtx install` wizard
+#   --uninstall      remove an existing install (delegates to `wtx uninstall`)
 #   --dry-run        print what would happen; make no changes
 #   -h, --help       show this help
 #
@@ -39,6 +40,7 @@ WTX_REF="${WTX_REF:-main}"
 WTX_PREFIX="${WTX_PREFIX:-$HOME/.local}"
 NO_PROJECT=0
 DRY_RUN=0
+DO_UNINSTALL=0
 
 log()  { printf '%s\n' "$*"; }
 info() { printf '  %s\n' "$*"; }
@@ -83,6 +85,7 @@ while [[ $# -gt 0 ]]; do
         --prefix)  [[ $# -ge 2 ]] || { err "--prefix requires a path"; exit 2; }; WTX_PREFIX="$2"; shift 2 ;;
         --prefix=*) WTX_PREFIX="${1#--prefix=}"; shift ;;
         --no-project) NO_PROJECT=1; shift ;;
+        --uninstall)  DO_UNINSTALL=1; shift ;;
         --dry-run)    DRY_RUN=1; shift ;;
         -h|--help)    usage_fallback; exit 0 ;;
         *) err "unknown option: $1"; echo >&2; usage_fallback >&2; exit 2 ;;
@@ -104,6 +107,23 @@ command -v curl >/dev/null 2>&1 || missing="${missing:+$missing, }curl"
 if [[ -n "$missing" ]]; then
     err "missing required tool(s): $missing"
     err "install them and re-run."
+    exit 1
+fi
+
+# --- Uninstall path -----------------------------------------------------------
+if [[ $DO_UNINSTALL -eq 1 ]]; then
+    if [[ -x "$WTX_HOME/bin/wtx" ]]; then
+        log "wtx uninstall (toolkit at $WTX_HOME)"
+        log
+        if [[ $DRY_RUN -eq 1 ]]; then
+            "$WTX_HOME/bin/wtx" uninstall --dry-run
+        else
+            "$WTX_HOME/bin/wtx" uninstall
+        fi
+        exit $?
+    fi
+    err "no wtx install found at $WTX_HOME (nothing to uninstall)"
+    err "  pass --home if you installed somewhere else."
     exit 1
 fi
 

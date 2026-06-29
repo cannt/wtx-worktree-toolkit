@@ -13,6 +13,7 @@
 #   status [args...]    Worktree dashboard
 #   install [args...]   Interactive installer wizard
 #   update [args...]    Update the toolkit checkout + per-project artifacts
+#   uninstall [args]    Remove the symlink (+ prompt for hooks/toolkit/extras)
 #   init                Interactive wtx.toml generator
 #   doctor              Dependency + install invariant check
 #   version             Print wtx version
@@ -45,6 +46,8 @@ unset _wtx_self _wtx_link
 source "$WTX_ROOT/lib/wtx-install.sh"
 # shellcheck source=../lib/wtx-update.sh disable=SC1091
 source "$WTX_ROOT/lib/wtx-update.sh"
+# shellcheck source=../lib/wtx-uninstall.sh disable=SC1091
+source "$WTX_ROOT/lib/wtx-uninstall.sh"
 
 # --- WORKSPACE_ROOT resolution ------------------------------------------------
 # Prefer the main repo's path even when invoked from inside a linked worktree:
@@ -105,6 +108,8 @@ COMMANDS:
   install [args]  Run the interactive installer wizard
   update [args]   Update the toolkit checkout + refresh project artifacts
                   (--check preview, --toolkit-only skip per-project refresh)
+  uninstall [a]   Remove the wtx symlink; prompt before removing hooks, the
+                  Gradle script, and the toolkit (--all, --yes, --dry-run)
   init            Generate wtx.toml in the current workspace
   doctor          Check dependencies and install invariants
   version         Print wtx version
@@ -207,6 +212,14 @@ _wtx_update() {
     # shellcheck source=../lib/worktree-tui.sh disable=SC1091
     source "$WTX_ROOT/lib/worktree-tui.sh" 2>/dev/null || true
     wtx_update_run "$@"
+}
+
+# --- Uninstall ----------------------------------------------------------------
+
+_wtx_uninstall() {
+    # shellcheck source=../lib/worktree-tui.sh disable=SC1091
+    source "$WTX_ROOT/lib/worktree-tui.sh" 2>/dev/null || true
+    wtx_uninstall_run "$@"
 }
 
 # --- Init ---------------------------------------------------------------------
@@ -350,6 +363,9 @@ case "$cmd" in
         ;;
     update)
         _wtx_update "$@"
+        ;;
+    uninstall)
+        _wtx_uninstall "$@"
         ;;
     init)
         _wtx_init "$@"

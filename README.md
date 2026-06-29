@@ -107,6 +107,19 @@ and flags any new `wtx.toml` keys worth adopting via `wtx install`. It refuses t
 touch a checkout with local changes, and cleanly skips the toolkit step if wtx was
 installed from a zip rather than a git clone.
 
+### Uninstalling
+
+```bash
+wtx uninstall            # removes the symlink, then prompts for the rest
+wtx uninstall --dry-run  # preview
+wtx uninstall --all      # symlink + hooks + Gradle + toolkit, no prompts
+```
+
+The symlink is always removed; hooks, the Gradle init script, and a
+bootstrap-managed toolkit checkout (`~/.local/share/wtx`) are removed only after
+you confirm. Your `wtx.toml` is always left untouched. From the curl/npx entry
+point the equivalent is `bootstrap.sh --uninstall`.
+
 ## Quickstart
 
 **1. Generate a config file in your workspace:**
@@ -174,6 +187,7 @@ wtx help
 | `status` | Dashboard across all known projects. Interactive menu (no args) or table view (project dir). |
 | `install` | Interactive installer wizard (binary symlink, `wtx.toml`, hooks, extras). |
 | `update` | Update the toolkit checkout and refresh per-project artifacts. `--check` previews; `--toolkit-only` skips the per-project refresh. |
+| `uninstall` | Remove the `wtx` symlink, then prompt before removing hooks, the Gradle script, and the toolkit checkout. Leaves `wtx.toml`. `--all`/`--yes` non-interactive, `--dry-run` previews. |
 | `init` | Interactive `wtx.toml` generator. Writes to `$WORKSPACE_ROOT/wtx.toml`. |
 | `doctor` | Check required/optional dependencies and install invariants. |
 | `version` | Print the wtx version. |
