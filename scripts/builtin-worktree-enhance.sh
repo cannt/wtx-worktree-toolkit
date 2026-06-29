@@ -99,6 +99,23 @@ if [[ -n "$SETUP_HOOK" ]]; then
     fi
 fi
 
+# Seed a knowledge graph into the new worktree so `graphify query` works
+# immediately (opt-out via `worktree.graphify_on_create = false`). The plugin
+# self-skips when the graphify CLI isn't installed, so default-on is safe.
+GRAPHIFY_ON_CREATE="true"
+if command -v wtx_config_get >/dev/null 2>&1; then
+    GRAPHIFY_ON_CREATE="$(wtx_config_get "worktree.graphify_on_create" "true")"
+fi
+case "$GRAPHIFY_ON_CREATE" in
+    false|0|no|off) : ;;  # explicitly disabled
+    *)
+        GRAPHIFY_HOOK="$WTX_ROOT/plugins/graphify-setup.sh"
+        if [[ -f "$GRAPHIFY_HOOK" ]]; then
+            bash "$GRAPHIFY_HOOK" "$WORKTREE_PATH" "$PROJECT_DIR" 2>/dev/null
+        fi
+        ;;
+esac
+
 # Extract ticket ID from branch name or worktree name (e.g. PROJ-1234-my-feature)
 REGISTRY_NAME="$(basename "$WORKTREE_PATH")"
 TICKET="N/A"

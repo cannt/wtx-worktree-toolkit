@@ -57,6 +57,13 @@ builtin_path = ".claude/worktrees"
 # `plugins/android-setup.sh` for an example Android setup hook.
 # setup_hook = "plugins/android-setup.sh"
 
+# Auto-seed a graphify knowledge graph into each new worktree so `graphify
+# query` works immediately. The graph is copied from the source repo at create
+# time (a new worktree equals its base branch, so the copy is exact), then kept
+# fresh by graphify's own git post-commit hook. Defaults to on, and safely
+# self-skips when the `graphify` CLI isn't installed. Set to false to disable.
+# graphify_on_create = true
+
 
 [defaults]
 # Default base branch when none is supplied on the command line.

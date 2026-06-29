@@ -431,6 +431,15 @@ if [[ -d "$WORKTREE_PATH/.build-cache" ]]; then
     echo "  Cleaned .build-cache/"
 fi
 
+# Remove the per-worktree knowledge graph. It lives inside the worktree dir, so
+# it would be deleted with it anyway — but clearing it explicitly guarantees the
+# graph is gone even if the on-disk delete later fails, and stops a graphify-out/
+# that a repo doesn't gitignore from tripping the untracked-files guard below.
+if [[ -d "$WORKTREE_PATH/graphify-out" ]]; then
+    rm -rf "$WORKTREE_PATH/graphify-out" 2>/dev/null
+    echo "  Cleaned graphify-out/"
+fi
+
 # Remove worktree — robust against busy directories and partial removals.
 # Finder re-creates .DS_Store mid-delete, which can abort git's recursive
 # remove with ENOTEMPTY even after it has already unregistered the worktree.

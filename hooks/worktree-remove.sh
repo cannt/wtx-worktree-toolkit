@@ -63,6 +63,13 @@ if [[ -d "$WORKTREE_PATH/.build-cache" ]]; then
     echo "Cleaned .build-cache/" >/dev/tty 2>/dev/null || true
 fi
 
+# Remove the per-worktree knowledge graph before `git worktree remove`, so an
+# un-gitignored graphify-out/ can't trip git's untracked-files guard.
+if [[ -d "$WORKTREE_PATH/graphify-out" ]]; then
+    rm -rf "$WORKTREE_PATH/graphify-out" 2>/dev/null
+    echo "Cleaned graphify-out/" >/dev/tty 2>/dev/null || true
+fi
+
 # Remove worktree
 git -C "$MAIN_REPO" worktree remove "$WORKTREE_PATH" 2>/dev/null
 if [[ $? -ne 0 ]]; then

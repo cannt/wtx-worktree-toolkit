@@ -69,3 +69,10 @@ echo "$METADATA_FILE" > "${TMPDIR:-/tmp}/.worktree-exit-metadata-latest-${PPID:-
 if [[ "$HOOK_ACTION" != "keep" ]] && [[ -d "$WORKTREE_PATH/.build-cache" ]]; then
     rm -rf "$WORKTREE_PATH/.build-cache" 2>/dev/null
 fi
+
+# Same gating as .build-cache: drop the per-worktree knowledge graph only when
+# actually removing the worktree, never when keeping it for re-entry (a kept
+# worktree wants its graph to survive).
+if [[ "$HOOK_ACTION" != "keep" ]] && [[ -d "$WORKTREE_PATH/graphify-out" ]]; then
+    rm -rf "$WORKTREE_PATH/graphify-out" 2>/dev/null
+fi
