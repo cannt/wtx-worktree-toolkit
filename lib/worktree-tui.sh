@@ -94,12 +94,17 @@ get_known_projects() {
     fi
 }
 
-# Abort check — handles gum exit code 130 (Escape/Ctrl+C)
-# Usage: tui_abort_check $? ["context message"]
+# Abort check — handles gum's abort exit codes.
+# Ctrl+C always exits 130. Esc is component-specific: gum input/write/choose/filter
+# quit with exit 1 (printing their own "not submitted"/"nothing selected" message),
+# distinct from gum confirm, where exit 1 legitimately means "No" and must not be
+# treated as an abort. Pass soft_rc=1 for input/choose/filter call sites only.
+# Usage: tui_abort_check $? ["context message"] [soft_rc]
 tui_abort_check() {
     local rc="$1"
     local context="${2:-}"
-    if [[ "$rc" -eq 130 ]]; then
+    local soft_rc="${3:-}"
+    if [[ "$rc" -eq 130 ]] || { [[ -n "$soft_rc" ]] && [[ "$rc" -eq "$soft_rc" ]]; }; then
         if [[ -n "$context" ]]; then
             echo "Aborted: $context" >&2
         else
@@ -124,7 +129,7 @@ tui_choose() {
             args+=(--selected "$selected_opt")
         fi
         gum choose "${args[@]}" "$@"
-        local _rc=$?; tui_abort_check $_rc; return $_rc
+        local _rc=$?; tui_abort_check $_rc "" 1; return $_rc
     else
         # F9: Detect EOF (Ctrl+D) to avoid infinite spin
         # select returns 0 even on EOF if no body executed, so use a flag
@@ -205,7 +210,7 @@ tui_input() {
             args+=(--placeholder "$placeholder")
         fi
         gum input "${args[@]}"
-        local _rc=$?; tui_abort_check $_rc; return $_rc
+        local _rc=$?; tui_abort_check $_rc "" 1; return $_rc
     else
         local val
         if [[ -n "$default_value" ]]; then
@@ -225,7 +230,7 @@ tui_filter() {
     _maybe_show_gum_hint
     if has_gum; then
         echo "$items_string" | gum filter --placeholder "$prompt" --strict=false --no-fuzzy-sort
-        local _rc=$?; tui_abort_check $_rc; return $_rc
+        local _rc=$?; tui_abort_check $_rc "" 1; return $_rc
     else
         # F14: bash 3.2 compatible, glob-safe, no eval
         local _saved_noglob=false
