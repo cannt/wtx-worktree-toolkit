@@ -99,6 +99,14 @@ get_known_projects() {
 # quit with exit 1 (printing their own "not submitted"/"nothing selected" message),
 # distinct from gum confirm, where exit 1 legitimately means "No" and must not be
 # treated as an abort. Pass soft_rc=1 for input/choose/filter call sites only.
+#
+# Every caller captures these functions via `VAR=$(tui_input ...)`, which runs in
+# a subshell — a plain `exit` here would only kill that subshell, and the parent
+# script would resume with VAR empty and fall through to a confusing downstream
+# "required" error. Signal $$ instead (bash keeps the top-level PID for $$ even
+# inside a subshell) so the whole script dies, exactly as Ctrl+C already does via
+# the terminal's SIGINT — this is the same convention as the INT trap's `exit 130`
+# in worktree-interactive.sh.
 # Usage: tui_abort_check $? ["context message"] [soft_rc]
 tui_abort_check() {
     local rc="$1"
@@ -110,6 +118,7 @@ tui_abort_check() {
         else
             echo "Aborted." >&2
         fi
+        kill -INT "$$" 2>/dev/null
         exit 0
     fi
 }
