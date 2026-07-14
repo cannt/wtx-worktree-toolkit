@@ -15,7 +15,10 @@
 # ERROR HANDLING: No set -e. Best-effort — failures don't block ExitWorktree.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-WORKSPACE_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
+
+# NOTE: this script deliberately needs no WTX_ROOT/WORKSPACE_ROOT. It derives
+# everything it needs from the worktree path itself and hands the registry update
+# off to builtin-worktree-post-exit.sh, so it works from any install layout.
 
 WORKTREE_PATH="${1:-$PWD}"
 

@@ -37,20 +37,40 @@ if [[ -z "${WORKSPACE_ROOT:-}" ]]; then
     fi
 fi
 
-# Resolve WTX_ROOT: prefer env from dispatcher; else self-resolve from this
-# hook's own location (hooks/ is a sibling of lib/ in the wtx install).
-if [[ -z "${WTX_ROOT:-}" ]]; then
-    _wtx_hook_self="${BASH_SOURCE[0]}"
-    while [[ -L "$_wtx_hook_self" ]]; do
-        _wtx_hook_link="$(readlink "$_wtx_hook_self")"
-        if [[ "$_wtx_hook_link" = /* ]]; then
-            _wtx_hook_self="$_wtx_hook_link"
-        else
-            _wtx_hook_self="$(cd "$(dirname "$_wtx_hook_self")" && pwd)/$_wtx_hook_link"
+# --- Locate the toolkit (keep in sync with scripts/builtin-worktree-*.sh) -----
+# The hook runs from one of several places — the wtx checkout (hooks/, a sibling
+# of lib/), a symlink to it, or a *copy* installed into a project's .claude/hooks/.
+# In that last case the toolkit is NOT nearby, so the old `dirname/..` guess
+# resolved to <repo>/.claude and silently found no lib/ — degrading the config
+# loader and the setup hook. Validate every candidate by probing for
+# lib/wtx-config.sh, then fall back to the `wtx` binary on PATH.
+_wtx_is_root() { [[ -n "${1:-}" ]] && [[ -f "$1/lib/wtx-config.sh" ]]; }
+_wtx_deref() {
+    local p="$1" link
+    while [[ -L "$p" ]]; do
+        link="$(readlink "$p")"
+        case "$link" in
+            /*) p="$link" ;;
+            *)  p="$(cd "$(dirname "$p")" && pwd)/$link" ;;
+        esac
+    done
+    printf '%s' "$p"
+}
+if ! _wtx_is_root "${WTX_ROOT:-}"; then
+    WTX_ROOT=""
+    _wtx_self="$(_wtx_deref "${BASH_SOURCE[0]}")"
+    _wtx_dir="$(cd "$(dirname "$_wtx_self")" && pwd)"
+    for _wtx_cand in "$_wtx_dir/.." "$_wtx_dir"; do
+        if _wtx_is_root "$_wtx_cand"; then
+            WTX_ROOT="$(cd "$_wtx_cand" && pwd)"
+            break
         fi
     done
-    WTX_ROOT="$(cd "$(dirname "$_wtx_hook_self")/.." && pwd)"
-    unset _wtx_hook_self _wtx_hook_link
+    if ! _wtx_is_root "${WTX_ROOT:-}" && command -v wtx >/dev/null 2>&1; then
+        _wtx_cand="$(cd "$(dirname "$(_wtx_deref "$(command -v wtx)")")/.." 2>/dev/null && pwd)"
+        _wtx_is_root "$_wtx_cand" && WTX_ROOT="$_wtx_cand"
+    fi
+    unset _wtx_self _wtx_dir _wtx_cand
 fi
 
 # Auto-detect project from pwd — delegates to wtx_detect_project when the

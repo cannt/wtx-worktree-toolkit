@@ -157,8 +157,20 @@ install_symlink() {
 
 install_hooks() {
     local destdir="$PWD/.claude/hooks"
-    local h hooks=(worktree-create.sh worktree-detect.sh worktree-remove.sh)
-    local rc=0
+    # Paths are relative to $WTX_ROOT and land in .claude/hooks/ under their
+    # basename. The builtin-worktree-* scripts ship from scripts/ rather than
+    # hooks/, but they are wired into .claude/settings.json exactly like a hook,
+    # so they install alongside the others; each one self-locates the toolkit at
+    # run time (see the WTX_ROOT resolver at the top of those scripts).
+    local rel rc=0
+    local hooks=(
+        hooks/worktree-create.sh
+        hooks/worktree-detect.sh
+        hooks/worktree-remove.sh
+        scripts/builtin-worktree-cleanup.sh
+        scripts/builtin-worktree-enhance.sh
+        scripts/builtin-worktree-post-exit.sh
+    )
 
     log
     log "Installing Claude Code hooks -> $destdir"
@@ -173,18 +185,19 @@ install_hooks() {
         return 1
     fi
 
-    for h in "${hooks[@]}"; do
-        local src="$WTX_ROOT/hooks/$h"
+    for rel in "${hooks[@]}"; do
+        local src="$WTX_ROOT/$rel"
+        local h="${rel##*/}"
         if [[ ! -f "$src" ]]; then
-            info "skip (missing in checkout): hooks/$h"
+            info "skip (missing in checkout): $rel"
             continue
         fi
         if [[ $DRY_RUN -eq 1 ]]; then
-            info "[dry-run] would copy hooks/$h -> $destdir/$h"
+            info "[dry-run] would copy $rel -> $destdir/$h"
         elif cp "$src" "$destdir/$h" && chmod +x "$destdir/$h"; then
             info "copied $h"
         else
-            err "failed to copy hooks/$h"
+            err "failed to copy $rel"
             rc=1
         fi
     done

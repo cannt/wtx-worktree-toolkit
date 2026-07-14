@@ -14,8 +14,40 @@
 # ERROR HANDLING: No set -e. Best-effort — failures don't block the session.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-# Prefer env from `bin/wtx` dispatcher; self-resolve when invoked directly.
-: "${WTX_ROOT:=$(cd "$SCRIPT_DIR/.." && pwd)}"
+
+# --- Locate the toolkit (keep in sync with hooks/worktree-create.sh) ----------
+# This script runs from one of several places — the wtx checkout (scripts/), a
+# project's .claude/hooks/, or a vendored copy — so a relative guess alone is
+# unsafe: `$SCRIPT_DIR/..` silently resolves to a directory with no lib/ when the
+# script sits two levels deep. Validate every candidate by probing for
+# lib/wtx-config.sh, and when the toolkit isn't nearby (the .claude/hooks/ case)
+# fall back to the `wtx` binary on PATH, the only reliable anchor there.
+_wtx_is_root() { [[ -n "${1:-}" ]] && [[ -f "$1/lib/wtx-config.sh" ]]; }
+_wtx_deref() {
+    local p="$1" link
+    while [[ -L "$p" ]]; do
+        link="$(readlink "$p")"
+        case "$link" in
+            /*) p="$link" ;;
+            *)  p="$(cd "$(dirname "$p")" && pwd)/$link" ;;
+        esac
+    done
+    printf '%s' "$p"
+}
+if ! _wtx_is_root "${WTX_ROOT:-}"; then
+    WTX_ROOT=""
+    for _wtx_cand in "$SCRIPT_DIR/.." "$SCRIPT_DIR"; do
+        if _wtx_is_root "$_wtx_cand"; then
+            WTX_ROOT="$(cd "$_wtx_cand" && pwd)"
+            break
+        fi
+    done
+    if ! _wtx_is_root "${WTX_ROOT:-}" && command -v wtx >/dev/null 2>&1; then
+        _wtx_cand="$(cd "$(dirname "$(_wtx_deref "$(command -v wtx)")")/.." 2>/dev/null && pwd)"
+        _wtx_is_root "$_wtx_cand" && WTX_ROOT="$_wtx_cand"
+    fi
+    unset _wtx_cand
+fi
 # WORKSPACE_ROOT: prefer the main repo's root even when invoked from inside a
 # linked worktree (show-toplevel would return the worktree path instead).
 if [[ -z "${WORKSPACE_ROOT:-}" ]]; then

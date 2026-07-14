@@ -12,6 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Run config loader tests: `bash tests/test-wtx-config.sh`
 - Run dispatcher tests: `bash tests/test-wtx-dispatcher.sh`
 - Run registry helper tests: `bash tests/test-worktree-registry.sh`
+- Run hook/builtin path-resolution tests: `bash tests/test-wtx-hook-paths.sh`
 - Environment/install check: `bin/wtx doctor`
 - Print version: `bin/wtx version`
 - Generate a `wtx.toml` interactively in the current git workspace: `bin/wtx init`
@@ -67,7 +68,20 @@ Three top-level scripts implement the main flows; each is a standalone entry poi
 ### Hooks and plugins
 
 - `hooks/worktree-create.sh`, `worktree-detect.sh`, `worktree-remove.sh` — Claude Code hook integrations that run around worktree lifecycle events; they are invoked by the Claude harness, not by `bin/wtx` directly.
+- `scripts/builtin-worktree-{cleanup,enhance,post-exit}.sh` — wired into a project's `.claude/settings.json` around `ExitWorktree`/`EnterWorktree`. They ship from `scripts/` but `install.sh --hooks` copies them into `.claude/hooks/` alongside the three above.
 - `plugins/android-setup.sh` — example post-create hook (Android/Gradle). Referenced from `[worktree].setup_hook` in `wtx.toml`. Treat this as the reference implementation for new setup hooks — do not re-add Android logic into core scripts.
+
+**Path-resolution contract for hooks and `builtin-worktree-*` scripts.** These run
+from three different layouts — the wtx checkout, a copy under a project's
+`.claude/hooks/` (where the toolkit is *not* nearby), or a legacy vendored tree —
+so they must never assume `$SCRIPT_DIR/..` is `WTX_ROOT`. Each carries an inline
+resolver that *validates* every candidate by probing for `lib/wtx-config.sh`:
+`$WTX_ROOT` env → `$SCRIPT_DIR/..` → `$SCRIPT_DIR` → dereference the `wtx` binary
+on `PATH` → give up and degrade gracefully. An unvalidated guess fails silently
+(libs don't source, `update_registry` becomes a no-op stub), so keep the resolver
+blocks in sync and covered by `tests/test-wtx-hook-paths.sh`. `WORKSPACE_ROOT` is
+resolved via `git rev-parse --git-common-dir` (never `--show-toplevel`), falling
+back to `$CLAUDE_PROJECT_DIR`.
 
 ### Error handling convention
 

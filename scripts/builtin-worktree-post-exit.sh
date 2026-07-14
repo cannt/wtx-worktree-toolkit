@@ -13,7 +13,54 @@
 # ERROR HANDLING: No set -e. Best-effort — failures don't block the session.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-WORKSPACE_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
+
+# --- Locate the toolkit (keep in sync with hooks/worktree-create.sh) ----------
+# This script runs from one of several places — the wtx checkout (scripts/), a
+# project's .claude/hooks/, or a vendored copy — so a relative guess alone is
+# unsafe. Validate every candidate by probing for lib/wtx-config.sh, and when the
+# toolkit isn't nearby (the .claude/hooks/ case) fall back to the `wtx` binary on
+# PATH, which is the only reliable anchor there.
+_wtx_is_root() { [[ -n "${1:-}" ]] && [[ -f "$1/lib/wtx-config.sh" ]]; }
+_wtx_deref() {
+    local p="$1" link
+    while [[ -L "$p" ]]; do
+        link="$(readlink "$p")"
+        case "$link" in
+            /*) p="$link" ;;
+            *)  p="$(cd "$(dirname "$p")" && pwd)/$link" ;;
+        esac
+    done
+    printf '%s' "$p"
+}
+if ! _wtx_is_root "${WTX_ROOT:-}"; then
+    WTX_ROOT=""
+    for _wtx_cand in "$SCRIPT_DIR/.." "$SCRIPT_DIR"; do
+        if _wtx_is_root "$_wtx_cand"; then
+            WTX_ROOT="$(cd "$_wtx_cand" && pwd)"
+            break
+        fi
+    done
+    if ! _wtx_is_root "${WTX_ROOT:-}" && command -v wtx >/dev/null 2>&1; then
+        _wtx_cand="$(cd "$(dirname "$(_wtx_deref "$(command -v wtx)")")/.." 2>/dev/null && pwd)"
+        _wtx_is_root "$_wtx_cand" && WTX_ROOT="$_wtx_cand"
+    fi
+    unset _wtx_cand
+fi
+
+# WORKSPACE_ROOT: the main repo, even when invoked from inside a linked worktree
+# (--show-toplevel would return the worktree path instead). The worktree we are
+# cleaning up may already be gone, so fall back to CLAUDE_PROJECT_DIR.
+if [[ -z "${WORKSPACE_ROOT:-}" ]]; then
+    _wtx_gcd="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+    if [[ -n "$_wtx_gcd" && -d "$_wtx_gcd" ]]; then
+        WORKSPACE_ROOT="$(dirname "$_wtx_gcd")"
+    elif [[ -n "${CLAUDE_PROJECT_DIR:-}" && -d "${CLAUDE_PROJECT_DIR:-}" ]]; then
+        WORKSPACE_ROOT="$CLAUDE_PROJECT_DIR"
+    else
+        WORKSPACE_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+    fi
+    unset _wtx_gcd
+fi
 
 # Find the metadata file saved by pre-exit script.
 # Fast path: follow the PPID-qualified pointer written by cleanup.sh.
@@ -80,7 +127,7 @@ if [[ -d "$WORKTREE_PATH" ]]; then
 fi
 
 # Worktree was removed — update registry
-source "$SCRIPT_DIR/lib/worktree-tui.sh" 2>/dev/null || {
+source "$WTX_ROOT/lib/worktree-tui.sh" 2>/dev/null || {
     update_registry() { :; }
 }
 

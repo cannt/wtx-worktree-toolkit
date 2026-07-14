@@ -144,8 +144,13 @@ wtx_update_hooks() {
     _WTX_UPDATE_HOOKS_COUNT=0
 
     local destdir="$WORKSPACE_ROOT/.claude/hooks"
+    # Keep in sync with install_hooks() in install.sh. A workspace that predates
+    # the builtin-worktree-* hooks still matches on the original three, so the
+    # refresh below (install.sh --hooks) adds the new ones on the next update.
     local found=0 h
-    for h in worktree-create.sh worktree-detect.sh worktree-remove.sh; do
+    for h in worktree-create.sh worktree-detect.sh worktree-remove.sh \
+             builtin-worktree-cleanup.sh builtin-worktree-enhance.sh \
+             builtin-worktree-post-exit.sh; do
         [[ -f "$destdir/$h" ]] && found=$((found + 1))
     done
 
