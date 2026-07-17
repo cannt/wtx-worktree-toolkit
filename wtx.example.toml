@@ -65,6 +65,17 @@ builtin_path = ".claude/worktrees"
 # graphify_on_create = true
 
 
+[android]
+# Read only by `plugins/android-setup.sh`. Major JDK version the setup hook pins
+# a new worktree's Gradle JVM to, resolved via `/usr/libexec/java_home -v <n>`.
+# A fresh worktree has no .idea/ or .gradle/ (neither is tracked), so Android
+# Studio picks its bundled JBR — currently Java 25, which Gradle 8.14 rejects.
+# The hook prefers the source project's existing java.home when there is one and
+# only falls back to this. Raise it as your Gradle version gains JDK support.
+# Defaults to 17.
+# gradle_jdk_version = "17"
+
+
 [defaults]
 # Default base branch when none is supplied on the command line.
 base_branch = "develop"
