@@ -127,28 +127,43 @@ _jdk_major_version() {
     "$java_bin" -version 2>&1 | head -1 | sed -n 's/.*version "\([0-9][0-9]*\).*/\1/p'
 }
 
+# Echo $1 back only if it is a JDK of the requested major version.
+# Every candidate goes through this, because both sources can hand back the wrong
+# JDK: `java_home -v N` treats N as a *minimum* (with no JDK N installed it returns
+# the newest one, even for -v 99, and exits 0), and the source project's java.home
+# is whatever Android Studio last wrote there — which is its bundled JBR once
+# someone opens the main repo in the IDE. Pinning either would reintroduce the
+# too-new JVM this hook exists to prevent.
+_accept_jdk() {
+    local candidate="$1" origin="$2" major
+    [[ -n "$candidate" ]] || return 1
+    if [[ ! -x "$candidate/bin/java" ]]; then
+        echo "  Warning: $origin points at $candidate, which has no runnable java — ignoring" >&2
+        return 1
+    fi
+    major="$(_jdk_major_version "$candidate")"
+    if [[ "$major" != "$GRADLE_JDK_VERSION" ]]; then
+        echo "  Warning: $origin resolved to JDK ${major:-unknown}, wanted $GRADLE_JDK_VERSION — ignoring" >&2
+        return 1
+    fi
+    printf '%s\n' "$candidate"
+}
+
 GRADLE_CONFIG="$WORKTREE_PATH/.gradle/config.properties"
 if [[ -f "$GRADLE_CONFIG" ]]; then
     echo "  Skipped: .gradle/config.properties already exists" >/dev/tty 2>/dev/null || true
 else
     # Prefer whatever the source project already resolved to; else find a matching JDK.
-    JAVA_HOME_PATH="$(grep -m1 '^java.home=' "$SOURCE_PROJECT/.gradle/config.properties" 2>/dev/null | cut -d= -f2-)"
+    JAVA_HOME_PATH=""
+    SOURCE_JAVA_HOME="$(grep -m1 '^java.home=' "$SOURCE_PROJECT/.gradle/config.properties" 2>/dev/null | cut -d= -f2-)"
+    if [[ -n "$SOURCE_JAVA_HOME" ]]; then
+        JAVA_HOME_PATH="$(_accept_jdk "$SOURCE_JAVA_HOME" "source project java.home")"
+    fi
     if [[ -z "$JAVA_HOME_PATH" ]] && [[ -x /usr/libexec/java_home ]]; then
-        # `java_home -v N` treats N as a *minimum*: with no JDK N installed it
-        # returns the newest one (even for -v 99) and exits 0. Taking that at face
-        # value would pin the too-new JDK this hook exists to avoid, so verify the
-        # major version and discard a mismatch.
-        JAVA_HOME_PATH="$(/usr/libexec/java_home -v "$GRADLE_JDK_VERSION" 2>/dev/null)"
-        if [[ -n "$JAVA_HOME_PATH" ]]; then
-            RESOLVED_MAJOR="$(_jdk_major_version "$JAVA_HOME_PATH")"
-            if [[ "$RESOLVED_MAJOR" != "$GRADLE_JDK_VERSION" ]]; then
-                echo "  Warning: java_home returned JDK ${RESOLVED_MAJOR:-unknown} for requested $GRADLE_JDK_VERSION — ignoring" >&2
-                JAVA_HOME_PATH=""
-            fi
-        fi
+        JAVA_HOME_PATH="$(_accept_jdk "$(/usr/libexec/java_home -v "$GRADLE_JDK_VERSION" 2>/dev/null)" "java_home -v $GRADLE_JDK_VERSION")"
     fi
 
-    if [[ -n "$JAVA_HOME_PATH" ]] && [[ -x "$JAVA_HOME_PATH/bin/java" ]]; then
+    if [[ -n "$JAVA_HOME_PATH" ]]; then
         mkdir -p "$WORKTREE_PATH/.gradle" 2>/dev/null
         printf '#%s\njava.home=%s\n' "$(date '+%a %b %d %H:%M:%S %Z %Y')" "$JAVA_HOME_PATH" > "$GRADLE_CONFIG" 2>/dev/null
         if [[ $? -eq 0 ]]; then
