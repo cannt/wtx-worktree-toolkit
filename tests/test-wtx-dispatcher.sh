@@ -171,6 +171,45 @@ assert_eq       "install route: dry-run exit 0" 0 "$rc"
 assert_contains "install route: dry-run reaches child" "install-script:--dry-run" "$out"
 rm -rf "$tmpdir"
 
+# -- logs: honours WTX_LOG_DIR and does not depend on a real install
+logdir="$(mktemp -d)"
+
+out=$(WTX_LOG_DIR="$logdir" bash "$WTX" logs --dir 2>&1); rc=$?
+assert_eq       "logs: --dir exit 0" 0 "$rc"
+assert_eq       "logs: --dir honours WTX_LOG_DIR" "$logdir" "$out"
+
+out=$(WTX_LOG_DIR="$logdir" bash "$WTX" logs --path 2>&1); rc=$?
+assert_eq       "logs: --path exit 0" 0 "$rc"
+assert_contains "logs: --path is a dated file under the log dir" "$logdir/wtx-" "$out"
+
+# Empty dir: no log files yet → clear message, non-zero exit
+out=$(WTX_LOG_DIR="$logdir" bash "$WTX" logs 2>&1); rc=$?
+assert_eq       "logs: empty dir exits 1" 1 "$rc"
+assert_contains "logs: empty dir explains why" "no log files" "$out"
+
+# With a log file present, tail prints its contents
+printf '[ts] [INFO] [fn] hello-from-test\n' > "$logdir/wtx-2026-01-01.log"
+out=$(WTX_LOG_DIR="$logdir" bash "$WTX" logs 2>&1); rc=$?
+assert_eq       "logs: exit 0 when a log exists" 0 "$rc"
+assert_contains "logs: prints log contents" "hello-from-test" "$out"
+
+out=$(WTX_LOG_DIR="$logdir" bash "$WTX" logs --clear 2>&1); rc=$?
+assert_eq       "logs: --clear exit 0" 0 "$rc"
+assert_eq       "logs: --clear removes log files" "" "$(ls "$logdir")"
+
+out=$(WTX_LOG_DIR="$logdir" bash "$WTX" logs --bogus 2>&1); rc=$?
+assert_eq       "logs: unknown option exits 2" 2 "$rc"
+assert_contains "logs: unknown option names the flag" "--bogus" "$out"
+
+# Missing dir entirely → guidance, not a crash
+out=$(WTX_LOG_DIR="$logdir/nope" bash "$WTX" logs 2>&1); rc=$?
+assert_eq       "logs: missing dir exits 1" 1 "$rc"
+assert_contains "logs: missing dir explains why" "no logs yet" "$out"
+
+rm -rf "$logdir"
+
+assert_contains "help: lists the logs command" "logs" "$(bash "$WTX" help 2>&1)"
+
 # -- Summary
 echo
 if [[ $FAILS -eq 0 ]]; then

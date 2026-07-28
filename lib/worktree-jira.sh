@@ -87,7 +87,12 @@ jira_fetch_my_tickets() {
         echo "Claude CLI not available — entering manual mode" >&2
         return 0
     fi
-    wtx_log INFO "trying MCP fallback (model=$WORKTREE_AI_MODEL timeout=${WORKTREE_JIRA_TIMEOUT:-30}s)"
+    # MCP server names change (e.g. a rename to an OAuth-based server), and an
+    # unknown tool name makes claude answer in prose instead of ticket lines.
+    local mcp_tool
+    mcp_tool="$(wtx_config_get "jira.mcp_tool" "mcp__jira_confluence__jira_search" 2>/dev/null)"
+    mcp_tool="${mcp_tool:-mcp__jira_confluence__jira_search}"
+    wtx_log INFO "trying MCP fallback (model=$WORKTREE_AI_MODEL tool=$mcp_tool timeout=${WORKTREE_JIRA_TIMEOUT:-30}s)"
     local raw_output
     raw_output=$(run_with_timeout "${WORKTREE_JIRA_TIMEOUT:-30}" \
         claude -p "Search Jira for project $jira_project_key. Run TWO searches and combine results:
@@ -95,7 +100,7 @@ jira_fetch_my_tickets() {
 2. Second search: JQL: project = $jira_project_key AND labels = frontend AND status != Done AND assignee is EMPTY ORDER BY updated DESC (max 15)
 Combine both lists. Mark tickets from search 1 with a star: ★ KEY | Summary | Status. Tickets from search 2 (unassigned) without star: KEY | Summary | Status. Remove duplicates. Return ONLY the plain text list, one per line. No markdown, no headers, no explanation." \
         --model "$WORKTREE_AI_MODEL" \
-        --allowedTools "mcp__jira_confluence__jira_search" \
+        --allowedTools "$mcp_tool" \
         --output-format json 2>/dev/null)
     local rc=$?
     if [[ $rc -eq 124 ]]; then

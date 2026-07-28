@@ -112,6 +112,7 @@ COMMANDS:
                   Gradle script, and the toolkit (--all, --yes, --dry-run)
   init            Generate wtx.toml in the current workspace
   doctor          Check dependencies and install invariants
+  logs [opts]     Show the debug log (-f follow, -n N lines, --path, --clear)
   version         Print wtx version
   help            Show this help
 
@@ -119,6 +120,7 @@ ENVIRONMENT:
   WTX_ROOT         $WTX_ROOT
   WORKSPACE_ROOT   $WORKSPACE_ROOT
   WTX_CONFIG       optional override for wtx.toml path
+  WTX_LOG_DIR      debug log directory (default ~/.local/share/wtx/logs)
 
 See \`wtx doctor\` to verify your environment.
 EOF
@@ -340,6 +342,80 @@ _wtx_exec_script() {
     exec "$target" "$@"
 }
 
+# Show the debug log written by wtx_log (see lib/worktree-tui.sh).
+# Logs rotate by day and are pruned after 7 days, so this is safe to leave on.
+_wtx_logs() {
+    local log_dir="${WTX_LOG_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/wtx/logs}"
+    local follow=0 lines=50 arg
+
+    while [[ $# -gt 0 ]]; do
+        arg="$1"
+        case "$arg" in
+            -f|--follow) follow=1 ;;
+            -n|--lines)  lines="${2:-50}"; shift ;;
+            --path)
+                printf '%s\n' "$log_dir/wtx-$(date +%Y-%m-%d).log"
+                return 0
+                ;;
+            --dir)
+                printf '%s\n' "$log_dir"
+                return 0
+                ;;
+            --clear)
+                rm -f "$log_dir"/wtx-*.log 2>/dev/null
+                printf 'wtx: cleared logs in %s\n' "$log_dir"
+                return 0
+                ;;
+            -h|--help)
+                cat <<EOF
+wtx logs — show the wtx debug log
+
+USAGE:
+  wtx logs [-f] [-n LINES] [--path|--dir|--clear]
+
+OPTIONS:
+  -f, --follow    Stream new entries as they are written (Ctrl-C to stop)
+  -n, --lines N   Show the last N lines (default 50)
+      --path      Print today's log file path and exit
+      --dir       Print the log directory and exit
+      --clear     Delete all wtx log files
+
+Logs live in $log_dir, rotate daily, and are pruned after 7 days.
+EOF
+                return 0
+                ;;
+            *)
+                printf 'wtx logs: unknown option: %s\n' "$arg" >&2
+                return 2
+                ;;
+        esac
+        shift
+    done
+
+    if [[ ! -d "$log_dir" ]]; then
+        printf 'wtx: no logs yet (%s does not exist)\n' "$log_dir" >&2
+        printf "     run a wtx command first, then re-run 'wtx logs'.\n" >&2
+        return 1
+    fi
+
+    # Follow every day's file so a midnight rollover doesn't strand the stream.
+    if [[ "$follow" -eq 1 ]]; then
+        local today="$log_dir/wtx-$(date +%Y-%m-%d).log"
+        [[ -f "$today" ]] || : > "$today" 2>/dev/null
+        printf '==> following %s (Ctrl-C to stop)\n' "$today" >&2
+        exec tail -n "$lines" -f "$today"
+    fi
+
+    local newest
+    newest="$(ls -t "$log_dir"/wtx-*.log 2>/dev/null | head -1)"
+    if [[ -z "$newest" ]]; then
+        printf 'wtx: no log files in %s\n' "$log_dir" >&2
+        return 1
+    fi
+    printf '==> %s\n' "$newest" >&2
+    tail -n "$lines" "$newest"
+}
+
 # Only run the dispatcher when executed, not when sourced for testing.
 if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
     return 0 2>/dev/null || true
@@ -372,6 +448,9 @@ case "$cmd" in
         ;;
     doctor)
         _wtx_doctor "$@"
+        ;;
+    logs)
+        _wtx_logs "$@"
         ;;
     version|--version|-V)
         _wtx_version

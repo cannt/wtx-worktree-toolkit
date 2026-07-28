@@ -58,6 +58,7 @@ source "$WTX_ROOT/lib/worktree-tui.sh" 2>/dev/null || {
 source "$WTX_ROOT/lib/worktree-api.sh" 2>/dev/null || {
     _load_api_credentials() { return 1; }
     has_api_credentials() { return 1; }
+    has_bitbucket_credentials() { return 1; }
     api_jira_search() { return 1; }
     api_jira_get_issue() { return 1; }
     api_jira_my_tickets() { return 1; }

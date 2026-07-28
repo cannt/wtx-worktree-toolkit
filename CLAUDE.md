@@ -16,6 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Environment/install check: `bin/wtx doctor`
 - Print version: `bin/wtx version`
 - Generate a `wtx.toml` interactively in the current git workspace: `bin/wtx init`
+- Read the debug log: `bin/wtx logs` (`-f` to follow live, `--clear` to wipe)
 
 Validation is shell-only — no Makefile or CI. The one `package.json` lives under
 `npm/` and is just a thin `npx wtx-toolkit` wrapper around `bootstrap.sh` (no build
@@ -82,6 +83,26 @@ on `PATH` → give up and degrade gracefully. An unvalidated guess fails silentl
 blocks in sync and covered by `tests/test-wtx-hook-paths.sh`. `WORKSPACE_ROOT` is
 resolved via `git rev-parse --git-common-dir` (never `--show-toplevel`), falling
 back to `$CLAUDE_PROJECT_DIR`.
+
+### Credentials and debug logging
+
+`lib/worktree-api.sh` resolves Jira/Bitbucket credentials in `_load_api_credentials`,
+searching three sources in precedence order: the process environment, then
+`$WTX_ENV_FILE` (default `$WORKSPACE_ROOT/.env`), then **every** server's `env`
+block in `$WORKSPACE_ROOT/.mcp.json`. The `.mcp.json` scan is deliberately
+server-name agnostic — it used to read only `mcpServers.jira_confluence.env`, and
+when that server was renamed the curl path died silently and every `wtx start`
+fell back to manual entry. Do not reintroduce a hardcoded server name. Jira and
+Bitbucket are independent: missing Bitbucket creds must not disable Jira, so gate
+Bitbucket calls on `has_bitbucket_credentials`, not `_load_api_credentials`.
+
+`wtx_log LEVEL "msg"` (defined in `lib/worktree-tui.sh`, stubbed everywhere else)
+writes to `$WTX_LOG_DIR/wtx-YYYY-MM-DD.log`, default
+`~/.local/share/wtx/logs/`, rotating daily and self-pruning after 7 days. It never
+prints to the terminal and never fails. Read it with `wtx logs`. When adding a
+fallback path, log *why* the preferred path was skipped — that log is what makes
+"it silently fell back" debuggable. Never log secrets (log the URL and user, never
+the token).
 
 ### Error handling convention
 

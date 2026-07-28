@@ -19,6 +19,20 @@ org = "acme"
 # base_url = "https://bitbucket.mycompany.internal"
 
 
+[jira]
+# Jira site URL, used only as a fallback when JIRA_URL is not found in the
+# environment, .env, or .mcp.json. Credentials themselves are never stored here
+# — wtx reads JIRA_URL / JIRA_USERNAME / JIRA_API_TOKEN from the environment,
+# then $WTX_ENV_FILE (or <workspace>/.env), then any server `env` block in
+# <workspace>/.mcp.json.
+# url = "https://acme.atlassian.net"
+
+# Tool name allowed for the `claude -p` MCP fallback used when the direct REST
+# call fails. Override this if your Jira MCP server is named something else —
+# a stale name makes the fallback answer in prose instead of ticket lines.
+# mcp_tool = "mcp__atlassian__jira_search"
+
+
 # Jira project key mapping: per-repo JIRA project key used when creating
 # branches and searching tickets. Repo name on the left, project key on the
 # right. If a repo has no entry here, Jira integration is effectively disabled

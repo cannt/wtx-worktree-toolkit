@@ -31,26 +31,35 @@ JIRA_API_TOKEN=""
 BB_API_USER=""
 BB_API_TOKEN=""
 
-# Load API credentials from .mcp.json (lazy, cached)
-# Returns 0 on success, 1 on failure
+# Load API credentials (lazy, cached).
+# Sources, highest precedence first: process environment, $WTX_ENV_FILE or
+# $WORKSPACE_ROOT/.env, then any server's `env` block in $WORKSPACE_ROOT/.mcp.json.
+# The .mcp.json scan is server-name agnostic on purpose: MCP servers get renamed
+# and swapped for OAuth ones, and hardcoding a server key silently kills the
+# curl path when that happens.
+# Jira and Bitbucket are independent — missing Bitbucket creds must not disable Jira.
+# Returns 0 when Jira creds are complete, 1 otherwise.
 _load_api_credentials() {
     if [[ "$_API_CREDS_LOADED" == "1" ]]; then
         return 0
     fi
 
     local mcp_file="${WORKSPACE_ROOT:-.}/.mcp.json"
-    if [[ ! -f "$mcp_file" ]]; then
-        wtx_log WARN "no .mcp.json at $mcp_file — Jira/Bitbucket curl path unavailable"
-        return 1
+    local env_file="${WTX_ENV_FILE:-${WORKSPACE_ROOT:-.}/.env}"
+    local config_url=""
+    if command -v wtx_config_get >/dev/null 2>&1; then
+        config_url="$(wtx_config_get "jira.url")"
     fi
 
-    local env_file="${WORKSPACE_ROOT:-.}/.env"
     local creds
-    creds=$(python3 - "$mcp_file" "$env_file" 2>/dev/null << 'PYEOF'
+    creds=$(python3 - "$mcp_file" "$env_file" "$config_url" 2>/dev/null << 'PYEOF'
 import json, sys, re, os
 
-# Load .env file into os.environ so ${VAR} references resolve correctly.
-# Simple KEY=VALUE parser — handles single/double quotes and skips comments.
+mcp_file, env_file, config_url = (sys.argv + ['', '', ''])[1:4]
+
+# Layer the sources into one dict: .mcp.json (lowest) < .env < process env.
+values = {}
+
 def load_dotenv(path):
     try:
         with open(path) as f:
@@ -60,48 +69,69 @@ def load_dotenv(path):
                     continue
                 k, _, v = line.partition('=')
                 k = k.strip()
-                v = v.strip().strip("'\"")
-                if k and k not in os.environ:
-                    os.environ[k] = v
+                if k.startswith('export '):
+                    k = k[len('export '):].strip()
+                values[k] = v.strip().strip("'\"")
     except OSError:
         pass
 
-load_dotenv(sys.argv[2] if len(sys.argv) > 2 else '')
+def load_mcp(path):
+    try:
+        with open(path) as f:
+            d = json.load(f)
+    except (OSError, json.JSONDecodeError, ValueError):
+        return
+    # Scan every server's env block, not one hardcoded server name.
+    for cfg in d.get('mcpServers', {}).values():
+        if not isinstance(cfg, dict):
+            continue
+        for k, v in (cfg.get('env') or {}).items():
+            if isinstance(v, str) and k not in values:
+                values[k] = v
 
-try:
-    with open(sys.argv[1]) as f:
-        d = json.load(f)
-    servers = d.get('mcpServers', {})
-    jira = servers.get('jira_confluence', {}).get('env', {})
-    bb = servers.get('bitbucket', {}).get('env', {})
-    def expand(val):
-        # Expand ${VAR:-default} and $VAR patterns stored literally in JSON
-        def _sub(m):
-            return os.environ.get(m.group(1), m.group(2) or '')
-        val = re.sub(r'\$\{([^}:]+):-([^}]*)\}', _sub, val)
-        val = re.sub(r'\$\{([^}]+)\}', lambda m: os.environ.get(m.group(1), ''), val)
-        val = re.sub(r'\$([A-Za-z_][A-Za-z0-9_]*)', lambda m: os.environ.get(m.group(1), ''), val)
-        return val
-    url      = expand(jira.get('JIRA_URL', ''))
-    user     = expand(jira.get('JIRA_USERNAME', ''))
-    token    = expand(jira.get('JIRA_API_TOKEN', ''))
-    bb_user  = expand(bb.get('ATLASSIAN_USER_EMAIL', ''))
-    bb_token = expand(bb.get('ATLASSIAN_API_TOKEN', ''))
-    if not all([url, user, token, bb_user, bb_token]):
-        sys.exit(1)
-    url = url.rstrip('/')
-    print(url); print(user); print(token); print(bb_user); print(bb_token)
-except Exception:
+load_mcp(mcp_file)
+load_dotenv(env_file)
+values.update(os.environ)
+
+def expand(val):
+    # Expand ${VAR:-default}, ${VAR} and $VAR references stored literally in JSON.
+    if not val:
+        return ''
+    val = re.sub(r'\$\{([^}:]+):-([^}]*)\}',
+                 lambda m: values.get(m.group(1)) or m.group(2) or '', val)
+    val = re.sub(r'\$\{([^}]+)\}', lambda m: values.get(m.group(1), ''), val)
+    val = re.sub(r'\$([A-Za-z_][A-Za-z0-9_]*)', lambda m: values.get(m.group(1), ''), val)
+    return val.strip()
+
+def pick(*names):
+    for n in names:
+        v = expand(values.get(n, ''))
+        if v:
+            return v
+    return ''
+
+url      = pick('JIRA_URL', 'ATLASSIAN_URL', 'ATLASSIAN_SITE_URL', 'CONFLUENCE_URL') or config_url
+user     = pick('JIRA_USERNAME', 'JIRA_EMAIL', 'ATLASSIAN_USER_EMAIL')
+token    = pick('JIRA_API_TOKEN', 'ATLASSIAN_API_TOKEN')
+bb_user  = pick('BITBUCKET_USERNAME', 'ATLASSIAN_USER_EMAIL', 'JIRA_USERNAME')
+bb_token = pick('BITBUCKET_API_TOKEN', 'ATLASSIAN_API_TOKEN', 'JIRA_API_TOKEN')
+
+# Jira is the gate; Bitbucket values are optional and may print empty.
+if not (url and user and token):
+    missing = [n for n, v in (('url', url), ('user', user), ('token', token)) if not v]
+    sys.stderr.write('missing:' + ','.join(missing) + '\n')
     sys.exit(1)
+
+print(url.rstrip('/')); print(user); print(token); print(bb_user); print(bb_token)
 PYEOF
     )
 
     if [[ $? -ne 0 ]] || [[ -z "$creds" ]]; then
-        wtx_log ERROR "failed to parse credentials from $mcp_file (missing fields or malformed JSON)"
+        wtx_log ERROR "no Jira credentials found — looked in env, $env_file, $mcp_file (need JIRA_URL + JIRA_USERNAME + JIRA_API_TOKEN)"
         return 1
     fi
 
-    # Read 5 lines into variables
+    # Read 5 lines into variables (last two may be empty — Bitbucket is optional)
     {
         IFS= read -r JIRA_API_URL
         IFS= read -r JIRA_API_USER
@@ -111,13 +141,19 @@ PYEOF
     } <<< "$creds"
 
     _API_CREDS_LOADED="1"
-    wtx_log INFO "credentials loaded (JIRA_URL=$JIRA_API_URL user=$JIRA_API_USER)"
+    wtx_log INFO "credentials loaded (JIRA_URL=$JIRA_API_URL user=$JIRA_API_USER bitbucket=$([[ -n "$BB_API_TOKEN" ]] && echo yes || echo no))"
     return 0
 }
 
-# Convenience: check if credentials are available
+# Convenience: check if Jira credentials are available
 has_api_credentials() {
     _load_api_credentials
+}
+
+# Convenience: check if Bitbucket credentials are available
+has_bitbucket_credentials() {
+    _load_api_credentials || return 1
+    [[ -n "$BB_API_USER" ]] && [[ -n "$BB_API_TOKEN" ]]
 }
 
 # Jira search via REST API v3
@@ -410,7 +446,7 @@ api_bb_find_pr() {
         return 1
     fi
 
-    _load_api_credentials || return 1
+    has_bitbucket_credentials || return 1
 
     local query="source.branch.name ~ \"${branch_or_ticket}\""
 
@@ -480,7 +516,7 @@ api_bb_check_open_prs() {
         return 1
     fi
 
-    _load_api_credentials || return 1
+    has_bitbucket_credentials || return 1
 
     local query="source.branch.name ~ \"${ticket_id}\""
     local encoded_q
