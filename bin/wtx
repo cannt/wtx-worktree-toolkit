@@ -11,6 +11,7 @@
 #   start [args...]     Create a new worktree
 #   done [args...]      Finalise + clean up a worktree
 #   status [args...]    Worktree dashboard
+#   clean [args...]     Reclaim caches stranded by deleted worktrees
 #   install [args...]   Interactive installer wizard
 #   update [args...]    Update the toolkit checkout + per-project artifacts
 #   uninstall [args]    Remove the symlink (+ prompt for hooks/toolkit/extras)
@@ -105,6 +106,8 @@ COMMANDS:
   start [args]    Create a new worktree (interactive or scripted)
   done [args]     Finalise, push, open PR, and clean up a worktree
   status [args]   Dashboard: list, manage, rebase worktrees
+  clean [args]    Remove IDE/tool caches left behind by deleted worktrees
+                  (-n dry-run, -y no prompt, -v also list caches kept)
   install [args]  Run the interactive installer wizard
   update [args]   Update the toolkit checkout + refresh project artifacts
                   (--check preview, --toolkit-only skip per-project refresh)
@@ -222,6 +225,26 @@ _wtx_uninstall() {
     # shellcheck source=../lib/worktree-tui.sh disable=SC1091
     source "$WTX_ROOT/lib/worktree-tui.sh" 2>/dev/null || true
     wtx_uninstall_run "$@"
+}
+
+# --- Clean --------------------------------------------------------------------
+
+_wtx_clean() {
+    # Sourced lazily: `clean` is the only command that needs these, and a
+    # missing lib must degrade (no scanners / plain-text prompts) rather than
+    # break the dispatcher for every other command.
+    # shellcheck source=../lib/worktree-tui.sh disable=SC1091
+    source "$WTX_ROOT/lib/worktree-tui.sh" 2>/dev/null || true
+    # shellcheck source=../lib/wtx-config.sh disable=SC1091
+    source "$WTX_ROOT/lib/wtx-config.sh" 2>/dev/null || true
+    if [[ ! -f "$WTX_ROOT/lib/wtx-clean.sh" ]]; then
+        printf 'wtx: lib/wtx-clean.sh not found under %s\n' "$WTX_ROOT" >&2
+        printf "     run 'wtx doctor' to check your install.\n" >&2
+        return 2
+    fi
+    # shellcheck source=../lib/wtx-clean.sh disable=SC1091
+    source "$WTX_ROOT/lib/wtx-clean.sh"
+    wtx_clean_run "$@"
 }
 
 # --- Init ---------------------------------------------------------------------
@@ -436,6 +459,9 @@ case "$cmd" in
         ;;
     install)
         _wtx_exec_script "worktree-install.sh" "$@"
+        ;;
+    clean)
+        _wtx_clean "$@"
         ;;
     update)
         _wtx_update "$@"

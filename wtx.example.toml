@@ -90,6 +90,17 @@ builtin_path = ".claude/worktrees"
 # gradle_jdk_version = "17"
 
 
+[clean]
+# Scanners used by `wtx clean` to find host-level caches stranded by deleted
+# worktrees (IDE indexes and the like, which live outside the worktree and so
+# survive `wtx done`). Paths are relative to the wtx install dir.
+#
+# Leave unset to auto-discover every `plugins/*-cleanup.sh`. That is safe: a
+# scanner for a tool you don't have installed reports nothing. Set this only to
+# restrict the set.
+# scanners = ["plugins/jetbrains-cleanup.sh"]
+
+
 [defaults]
 # Default base branch when none is supplied on the command line.
 base_branch = "develop"

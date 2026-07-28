@@ -12,6 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Run config loader tests: `bash tests/test-wtx-config.sh`
 - Run dispatcher tests: `bash tests/test-wtx-dispatcher.sh`
 - Run registry helper tests: `bash tests/test-worktree-registry.sh`
+- Run cleanup tests: `bash tests/test-wtx-clean.sh`
 - Run hook/builtin path-resolution tests: `bash tests/test-wtx-hook-paths.sh`
 - Environment/install check: `bin/wtx doctor`
 - Print version: `bin/wtx version`
@@ -83,6 +84,38 @@ on `PATH` → give up and degrade gracefully. An unvalidated guess fails silentl
 blocks in sync and covered by `tests/test-wtx-hook-paths.sh`. `WORKSPACE_ROOT` is
 resolved via `git rev-parse --git-common-dir` (never `--show-toplevel`), falling
 back to `$CLAUDE_PROJECT_DIR`.
+
+### Orphaned-cache cleanup (`wtx clean`, `lib/wtx-clean.sh`)
+
+`wtx done` cleans only what it owns — the worktree dir, the git registration,
+the branch, the registry entry, the Warp tab. State that *other* tools keyed by
+the worktree's absolute path and parked outside it (IDE indexes, per-project
+caches) survives, at roughly 1 GB per worktree ever opened in Android Studio.
+`wtx clean` reclaims it.
+
+The split is deliberate: **core owns the policy and every deletion, scanners
+own tool-specific discovery.** A scanner (`plugins/*-cleanup.sh`, auto-
+discovered unless `[clean].scanners` is set) prints TAB-separated records —
+`delete <path> <label> <ref,ref,…>` or `note - <message>` — where refs are
+absolute project paths it read out of the cache's own metadata. Core applies
+one rule:
+
+> a cache is an orphan iff it names at least one path in the search domain and
+> every such path is gone from disk.
+
+The domain is `$WORKSPACE_ROOT` **plus its parent** — `wtx start` creates
+worktrees as siblings of the repo (`Mango/rfid` → `Mango/rfid-ADW-1563`) while
+`WORKSPACE_ROOT` resolves to the repo itself, so without the parent no orphan
+is ever found. The rule fails safe both ways: a live worktree keeps a live
+reference, and an unrelated project names nothing in the domain and so yields
+no evidence. `_wtx_clean_target_ok` is core's veto on what a scanner may have
+deleted (absolute, existing, under `$HOME`, ≥3 components deep, never inside
+the workspace) and is re-checked after the confirmation prompt.
+
+Two things to preserve when touching this: scanners must **withhold** records
+rather than assert deletions (a buggy scanner should reclaim too little, never
+too much), and evidence-gathering stops at the first proof of life — that early
+exit is both the fast path and the safe one on multi-gigabyte indexes.
 
 ### Credentials and debug logging
 
