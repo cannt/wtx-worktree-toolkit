@@ -464,7 +464,11 @@ fi
 # worktree is logically gone — finish the on-disk cleanup ourselves so the
 # rest of the done-flow (registry update, branch deletion, PR offer) still runs
 # instead of leaving everything half-done.
-if git -C "$MAIN_REPO" worktree list --porcelain 2>/dev/null | grep -qF -- "worktree $WORKTREE_PATH"; then
+# The match must be whole-line (-x): sibling worktrees routinely share a path
+# prefix (`repo-PROJ-1234` vs `repo-PROJ-1234-dev`), and a substring match would
+# see the sibling, report a successful removal as a failure, and abort the rest
+# of the done-flow with everything half-cleaned.
+if git -C "$MAIN_REPO" worktree list --porcelain 2>/dev/null | grep -qxF -- "worktree $WORKTREE_PATH"; then
     echo "  Removal failed — worktree still registered with git." >&2
     echo "    git -C $MAIN_REPO worktree remove --force $WORKTREE_PATH" >&2
     exit 1
