@@ -1,12 +1,14 @@
 #!/bin/bash
 # Worktree API Library
-# Direct curl + python3 API calls for Jira and Bitbucket, replacing claude -p for data fetching.
+# Direct API calls for Jira and Bitbucket, replacing claude -p for data fetching.
+# Jira goes through Atlassian's Teamwork Graph CLI (`twg`) when available, then REST
+# (curl + python3); see _jira_backend. Bitbucket is REST only.
 #
 # Usage: source "$SCRIPT_DIR/lib/worktree-api.sh"
 #
 # Prerequisites: WORKSPACE_ROOT must be set by the caller.
-# Credentials are read from $WORKSPACE_ROOT/.mcp.json (same file MCP servers use).
-# All api_* functions return 1 on failure, enabling MCP fallback in worktree-jira.sh.
+# twg uses its own OAuth login (`twg login`); REST credentials are read from env, .env, .mcp.json.
+# All api_* functions return 1 on failure, enabling the opt-in MCP fallback in worktree-jira.sh.
 
 # Load wtx config loader (same directory); safe if missing.
 _wtx_api_self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -156,13 +158,113 @@ has_bitbucket_credentials() {
     [[ -n "$BB_API_USER" ]] && [[ -n "$BB_API_TOKEN" ]]
 }
 
-# Jira search via REST API v3
+# Jira backend selection: auto (default) | twg | rest | mcp.
+# Source: $WTX_JIRA_BACKEND, then `jira.backend` in wtx.toml.
+#   auto — Atlassian's Teamwork Graph CLI (`twg`) first, REST second
+#   twg  — twg only          rest — REST only
+#   mcp  — skip twg and REST; worktree-jira.sh goes straight to the claude -p MCP path
+_jira_backend() {
+    local backend="${WTX_JIRA_BACKEND:-}"
+    if [[ -z "$backend" ]] && command -v wtx_config_get >/dev/null 2>&1; then
+        backend="$(wtx_config_get "jira.backend")"
+    fi
+    case "$backend" in
+        twg|rest|mcp) printf '%s\n' "$backend" ;;
+        *) printf 'auto\n' ;;
+    esac
+}
+
+# Resolve the twg binary ($WTX_TWG_BIN, PATH, then the installer's default dir).
+_twg_bin() {
+    if [[ -n "${WTX_TWG_BIN:-}" ]]; then
+        [[ -x "$WTX_TWG_BIN" ]] && printf '%s\n' "$WTX_TWG_BIN" && return 0
+        return 1
+    fi
+    command -v twg 2>/dev/null && return 0
+    [[ -x "$HOME/.local/bin/twg" ]] && printf '%s\n' "$HOME/.local/bin/twg" && return 0
+    return 1
+}
+
+_jira_try_twg() {
+    local backend
+    backend="$(_jira_backend)"
+    [[ "$backend" == "auto" || "$backend" == "twg" ]] && _twg_bin >/dev/null
+}
+
+_jira_try_rest() {
+    local backend
+    backend="$(_jira_backend)"
+    [[ "$backend" == "auto" || "$backend" == "rest" ]]
+}
+
+# Run twg with JSON output; prints stdout on success, returns 1 on failure.
+_twg_json() {
+    local bin
+    bin="$(_twg_bin)" || return 1
+    "$bin" "$@" -o json --output-summary none --timeout-ms 15000 2>/dev/null
+}
+
+# twg search, reshaped to the REST /search/jql body: {"issues":[{"key","fields":{...}}]}
+_twg_jira_search() {
+    local jql="$1" max_results="$2" fields="$3"
+    local raw
+    raw=$(_twg_json jira workitem query --jql "$jql" --first "$max_results" --fields "$fields") || {
+        wtx_log WARN "twg search failed — JQL: ${jql:0:120}"
+        return 1
+    }
+    python3 -c "
+import json, sys
+try:
+    data = json.loads(sys.argv[1]).get('data') or {}
+    issues = []
+    for i in data.get('issues', []):
+        key = i.get('key', '')
+        if key:
+            issues.append({'key': key, 'fields': {k: v for k, v in i.items() if k not in ('key', 'id', 'self', 'url')}})
+    print(json.dumps({'issues': issues}))
+except Exception:
+    sys.exit(1)
+" "$raw" 2>/dev/null
+}
+
+# twg get, reshaped to the REST /issue body: {"key","fields":{...}}
+_twg_jira_get_issue() {
+    local ticket_id="$1" fields="$2"
+    local raw
+    raw=$(_twg_json jira workitem get "$ticket_id" --fields "$fields") || {
+        wtx_log WARN "twg get-issue failed — ticket=$ticket_id"
+        return 1
+    }
+    python3 -c "
+import json, sys
+try:
+    items = json.loads(sys.argv[1]).get('data') or []
+    issue = items[0] if items else {}
+    if not issue.get('key'):
+        sys.exit(1)
+    skip = ('key', 'id', 'self', 'url', 'expand')
+    print(json.dumps({'key': issue['key'], 'fields': {k: v for k, v in issue.items() if k not in skip}}))
+except Exception:
+    sys.exit(1)
+" "$raw" 2>/dev/null
+}
+
+# Jira search — twg first, REST API v3 second (see _jira_backend)
 # Usage: RESULT=$(api_jira_search "jql query" max_results "key,summary,status")
-# Returns raw JSON body on success, returns 1 on failure
+# Returns REST-shaped JSON body on success, returns 1 on failure
 api_jira_search() {
     local jql="$1"
     local max_results="${2:-10}"
     local fields="${3:-key,summary,status}"
+
+    if _jira_try_twg; then
+        local twg_result
+        if twg_result=$(_twg_jira_search "$jql" "$max_results" "$fields") && [[ -n "$twg_result" ]]; then
+            echo "$twg_result"
+            return 0
+        fi
+    fi
+    _jira_try_rest || return 1
 
     _load_api_credentials || return 1
 
@@ -215,6 +317,15 @@ api_jira_get_issue() {
         return 1
     fi
 
+    if _jira_try_twg; then
+        local twg_result
+        if twg_result=$(_twg_jira_get_issue "$ticket_id" "$fields") && [[ -n "$twg_result" ]]; then
+            echo "$twg_result"
+            return 0
+        fi
+    fi
+    _jira_try_rest || return 1
+
     _load_api_credentials || return 1
 
     local response
@@ -250,21 +361,25 @@ api_jira_my_tickets() {
         return 1
     fi
 
-    _load_api_credentials || return 1
-
-    # Search 1: assigned to current user
-    local assigned_json
-    assigned_json=$(api_jira_search \
+    # Search 1 (assigned to current user) runs in the background while search 2
+    # (unassigned frontend tickets) runs here — each twg call is ~2-5s.
+    local assigned_file
+    assigned_file=$(mktemp "${TMPDIR:-/tmp}/wtx-jira.XXXXXX") || return 1
+    api_jira_search \
         "project = $project_key AND assignee = currentUser() AND status != Done ORDER BY updated DESC" \
         "10" \
-        "key,summary,status") || assigned_json=""
+        "key,summary,status" > "$assigned_file" 2>/dev/null &
+    local assigned_pid=$!
 
-    # Search 2: unassigned frontend tickets
     local unassigned_json
     unassigned_json=$(api_jira_search \
         "project = $project_key AND labels = frontend AND status != Done AND assignee is EMPTY ORDER BY updated DESC" \
         "15" \
         "key,summary,status") || unassigned_json=""
+
+    local assigned_json=""
+    wait "$assigned_pid" && assigned_json=$(<"$assigned_file")
+    rm -f "$assigned_file"
 
     if [[ -z "$assigned_json" ]] && [[ -z "$unassigned_json" ]]; then
         return 1
@@ -327,8 +442,6 @@ api_jira_ticket_details() {
     if [[ -z "$ticket_id" ]]; then
         return 1
     fi
-
-    _load_api_credentials || return 1
 
     local raw_json
     raw_json=$(api_jira_get_issue "$ticket_id" "summary,status,description,issuetype,fixVersions,assignee,labels") || return 1

@@ -27,10 +27,20 @@ org = "acme"
 # <workspace>/.mcp.json.
 # url = "https://acme.atlassian.net"
 
-# Tool name allowed for the `claude -p` MCP fallback used when the direct REST
-# call fails. Override this if your Jira MCP server is named something else —
-# a stale name makes the fallback answer in prose instead of ticket lines.
-# mcp_tool = "mcp__atlassian__jira_search"
+# Data backend for Jira reads:
+#   "auto" (default) — Atlassian's Teamwork Graph CLI (`twg`, its own OAuth via
+#                      `twg login`) first, then the REST credentials above
+#   "twg" / "rest"   — only that backend
+#   "mcp"            — skip both and use the `claude -p` MCP fallback
+# Env override: WTX_JIRA_BACKEND. twg binary override: WTX_TWG_BIN.
+# backend = "auto"
+
+# The `claude -p` MCP fallback is OFF unless backend = "mcp" or this is true —
+# an MCP tool name the launching Claude account lacks makes it answer in prose.
+# mcp_fallback = false
+# Tool names allowed for that fallback (search / single-issue get).
+# mcp_tool = "mcp__atlassian__searchJiraIssuesUsingJql"
+# mcp_get_tool = "mcp__atlassian__getJiraIssue"
 
 
 # Jira project key mapping: per-repo JIRA project key used when creating

@@ -1,7 +1,8 @@
 #!/bin/bash
 # Worktree Jira Library
 # Jira and Bitbucket integration for worktree scripts.
-# Uses curl-first approach for data fetching, with claude -p MCP fallback.
+# Data fetching goes through worktree-api.sh (twg first, REST second). The claude -p MCP
+# fallback is opt-in (jira.backend = "mcp" or jira.mcp_fallback = true).
 # AI reasoning (branch suggestion, AC analysis) still uses claude -p.
 #
 # Usage: source "$SCRIPT_DIR/lib/worktree-jira.sh"
@@ -33,6 +34,26 @@ WORKTREE_AI_MODEL="${WORKTREE_AI_MODEL:-claude-haiku-4-5-20251001}"
 # Speed optimization env vars for reasoning-only claude -p calls (no MCP, no tools)
 # These disable CLAUDE.md scanning, file checkpointing, and telemetry to reduce startup from ~6s to ~3s
 CLAUDE_FAST_ENV="CLAUDE_CODE_DISABLE_CLAUDE_MDS=1 CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING=1 DISABLE_TELEMETRY=1"
+
+# The claude -p MCP fallback runs only when explicitly enabled: an MCP tool name that the
+# launching account lacks makes claude answer in prose, and it costs 20-45s per call.
+_jira_mcp_fallback_enabled() {
+    [[ "$(_jira_backend 2>/dev/null)" == "mcp" ]] && return 0
+    [[ "$(wtx_config_get "jira.mcp_fallback" 2>/dev/null)" == "true" ]]
+}
+
+# MCP tool names for the fallback — override in wtx.toml when the server is named differently.
+_jira_mcp_search_tool() {
+    local tool
+    tool="$(wtx_config_get "jira.mcp_tool" 2>/dev/null)"
+    printf '%s\n' "${tool:-mcp__atlassian__searchJiraIssuesUsingJql}"
+}
+
+_jira_mcp_get_tool() {
+    local tool
+    tool="$(wtx_config_get "jira.mcp_get_tool" 2>/dev/null)"
+    printf '%s\n' "${tool:-mcp__atlassian__getJiraIssue}"
+}
 
 # Validate an eval payload against a whitelist regex (defense-in-depth)
 # Returns 0 if valid, 1 if invalid
@@ -81,17 +102,19 @@ jira_fetch_my_tickets() {
         wtx_log WARN "api_jira_my_tickets not available"
     fi
 
-    # MCP fallback
+    # MCP fallback (opt-in)
+    if ! _jira_mcp_fallback_enabled; then
+        wtx_log WARN "Jira fetch failed (backend=$(_jira_backend)) and MCP fallback is off — run 'twg doctor'"
+        echo "Jira fetch failed — entering manual mode (check 'twg doctor')" >&2
+        return 0
+    fi
     if ! has_claude; then
         wtx_log WARN "claude CLI not available — cannot use MCP fallback"
         echo "Claude CLI not available — entering manual mode" >&2
         return 0
     fi
-    # MCP server names change (e.g. a rename to an OAuth-based server), and an
-    # unknown tool name makes claude answer in prose instead of ticket lines.
     local mcp_tool
-    mcp_tool="$(wtx_config_get "jira.mcp_tool" "mcp__jira_confluence__jira_search" 2>/dev/null)"
-    mcp_tool="${mcp_tool:-mcp__jira_confluence__jira_search}"
+    mcp_tool="$(_jira_mcp_search_tool)"
     wtx_log INFO "trying MCP fallback (model=$WORKTREE_AI_MODEL tool=$mcp_tool timeout=${WORKTREE_JIRA_TIMEOUT:-30}s)"
     local raw_output
     raw_output=$(run_with_timeout "${WORKTREE_JIRA_TIMEOUT:-30}" \
@@ -165,8 +188,8 @@ jira_get_ticket_summary() {
         fi
     fi
 
-    # MCP fallback
-    if ! has_claude; then
+    # MCP fallback (opt-in)
+    if ! _jira_mcp_fallback_enabled || ! has_claude; then
         return 0
     fi
     local raw_output
@@ -175,7 +198,7 @@ jira_get_ticket_summary() {
 STATUS: <status>
 DESCRIPTION: <first 200 chars of description>. No markdown." \
         --model "$WORKTREE_AI_MODEL" \
-        --allowedTools "mcp__jira_confluence__jira_get_issue" \
+        --allowedTools "$(_jira_mcp_get_tool)" \
         --output-format json 2>/dev/null)
     local rc=$?
     if [[ $rc -ne 0 ]] || [[ -z "$raw_output" ]]; then
@@ -203,8 +226,8 @@ except (json.JSONDecodeError, KeyError, ValueError):
 # Returns exactly ONE line. On failure: all 8 variables set to empty strings.
 # Concurrency-safe: no global state, single stdout line.
 #
-# Performance: curl fetches ticket data (~0.5s), claude -p does reasoning only (~5s).
-# If curl fails, falls back to single claude -p + MCP call (~25s).
+# Performance: twg/curl fetch ticket data (~0.5-2s), claude -p does reasoning only (~5s).
+# If both fail and the MCP fallback is enabled, a single claude -p + MCP call (~25s).
 jira_analyze_ticket() {
     local ticket_id="$1"
     local project_name="$2"
@@ -353,7 +376,12 @@ print(out)
         return 0
     fi
 
-    # Full MCP fallback — curl failed or api function not available
+    # Full MCP fallback (opt-in) — twg/REST failed or api function not available
+    if ! _jira_mcp_fallback_enabled; then
+        wtx_log WARN "ticket fetch failed for $ticket_id and MCP fallback is off — returning empty defaults"
+        echo "$empty_defaults"
+        return 0
+    fi
     if ! has_claude; then
         wtx_log WARN "claude CLI not available — jira_analyze_ticket returning empty defaults"
         echo "$empty_defaults"
@@ -372,7 +400,7 @@ STATUS: <issue status, e.g. To Do, In Progress, Done>
 DESCRIPTION: <first 500 characters of description, no markdown formatting>
 ACS: <acceptance criteria as checklist lines separated by | character, e.g. 'AC1|AC2|AC3'. If no ACs found, return NONE>" \
         --model "$WORKTREE_AI_MODEL" \
-        --allowedTools "mcp__jira_confluence__jira_get_issue" \
+        --allowedTools "$(_jira_mcp_get_tool)" \
         --output-format json 2>/dev/null)
     local rc=$?
     if [[ $rc -ne 0 ]] || [[ -z "$raw_output" ]]; then
